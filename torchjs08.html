@@ -1,0 +1,121 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">As easy as I can make torchjs08.html (Tripwire with History)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+This matches our <b>torch08.py</b> logic but adds a <b>History Log</b>.<br><br>
+The top area shows <b>LIVE</b> data. The bottom area keeps a <b>PERMANENT</b> list of every time movement was detected so you can study the loss values.<br>
+See if you can improve it then save your improved code<br>
+</div><br>
+
+<div id="myCodeSpace"> 
+  <select id="myCameraSelect"></select>
+  <input id="myButton1" type="button" value="Start Tripwire" onclick="{
+    (async function myGo() {
+      const myVideo = document.getElementById('myVideo1');
+      const myDisplay = document.getElementById('myDiv1');
+      const myHistory = document.getElementById('myDivHistory');
+      const myDeviceId = document.getElementById('myCameraSelect').value;
+      
+      const myStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+      });
+      myVideo.srcObject = myStream;
+
+      let myOldTensor = null;
+      let myLastStatus = 'STILL';
+      const myThreshold = 0.0005; // matches torch08.py
+
+      setInterval(async () => {
+        const myCurrentTensor = tf.browser.fromPixels(myVideo)
+          .resizeBilinear([100, 100])
+          .mean(2) 
+          .div(255.0);
+
+        if (myOldTensor != null) {
+          const myDifference = tf.metrics.meanSquaredError(myOldTensor, myCurrentTensor);
+          const myLossValue = myDifference.dataSync()[0];
+
+          let myStatus = 'STILL';
+          let myColor = 'green';
+
+          if (myLossValue > myThreshold) {
+            myStatus = 'MOVEMENT!';
+            myColor = 'red';
+            
+            // Only log to history when movement is detected
+            // This prevents the screen from filling up with 'STILL' messages
+            const myTime = new Date().toLocaleTimeString();
+            myHistory.innerHTML = `[${myTime}] Loss: ${myLossValue.toFixed(6)}<br>` + myHistory.innerHTML;
+          }
+
+          // LIVE Status Area
+          myDisplay.innerHTML = `LIVE Status: <b style='color:${myColor}'>${myStatus}</b><br>`;
+          myDisplay.innerHTML += `Current Loss: ${myLossValue.toFixed(6)}`;
+          
+          myOldTensor.dispose();
+          myDifference.dispose();
+        }
+
+        myOldTensor = myCurrentTensor;
+      }, 100); 
+    })();
+  }"><br><br>
+
+  <video id="myVideo1" width="320" height="240" autoplay playsinline 
+    style="border: 5px solid black; background-color: #ddd;"></video>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
+
+<b>Movement History:</b>
+<div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 150px; overflow-y: scroll; background-color: #f0f0f0;">Log will appear here...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+(async function myListCameras() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div><div id=\'myDivHistory\'>...</div>';
+   
+   setTimeout(() => {
+      myArea.rows = myArea.value.split('\n').length + 3;
+   }, 100);
+}
+</script>
+
+</body>
