@@ -1,0 +1,89 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">As easy as I can make torchjs02.html (Autograd)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%;  border:5px solid blue; padding:5px; margin:5px;"> 
+This matches our <b>torch02.py</b> logic. It shows how the AI tracks math to find a slope (gradient).<br><br>
+We define <b>myY = x² + 5</b>. In calculus, the slope is <b>2x</b>. If <b>x=3</b>, the slope should be <b>6</b>.<br>
+Click the button to run the math, then edit the equation in the black box to see how the "Magic" slope changes.
+</div><br>
+
+<div id="myCodeSpace"> 
+  <input id="myButton1" type="button" value="Run torchjs02 Logic" onclick="{
+    (async function myGo() {
+      const myDisplay = document.getElementById('myDiv1');
+      
+      // 1. Initialization - Matches torch.tensor([3.0], requires_grad=True)
+      // Use tf.variable so the value can be tracked/changed
+      const myInput = tf.variable(tf.scalar(3.0));
+
+      // 2. Define the Math Function - Matches myY = myInput**2 + 5
+      // In JS, we create a function that represents our equation
+      const myEquation = (x) => x.square().add(5);
+
+      // 3. The Backward Pass - Matches myY.backward()
+      // tf.grad returns a function that calculates the derivative (slope)
+      const myGradFunc = tf.grad(myEquation);
+      const mySlopeTensor = myGradFunc(myInput);
+      const mySlope = mySlopeTensor.dataSync()[0];
+
+      // 4. Results and Prediction
+      const myStepSize = 0.01;
+      const myPredictedChange = mySlope * myStepSize;
+
+      myDisplay.innerHTML = `<b>Function:</b> y = x² + 5<br>`;
+      myDisplay.innerHTML += `<b>Input (x):</b> ${myInput.dataSync()[0]}<br>`;
+      myDisplay.innerHTML += `<b>Gradient (Slope):</b> ${mySlope.toFixed(2)}<br><br>`;
+      
+      myDisplay.innerHTML += `If we move x by ${myStepSize}, y should change by ~${myPredictedChange.toFixed(4)}<br>`;
+      
+      // Verification
+      const myNewX = 3.0 + myStepSize;
+      const myNewY = (myNewX ** 2) + 5;
+      myDisplay.innerHTML += `<b>Actual new y:</b> ${myNewY.toFixed(4)}`;
+
+    })();
+  }"><br><br>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace;">...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  document.getElementById('myButton1').click();
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML/JS code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src=\'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0\'> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
+   
+   setTimeout(() => {
+      myArea.rows = myArea.value.split('\n').length + 3;
+   }, 100);
+}
+</script>
+
+</body>

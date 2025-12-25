@@ -1,0 +1,96 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">As easy as I can make torchjs05.html (Layers & Optimizers)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%;  border:5px solid blue; padding:5px; margin:5px;"> 
+This matches our <b>torch05.py</b> logic. Instead of manual math, we use <b>tf.layers.dense</b> to create the brain structure.<br><br>
+Goal: Find the rule <b>y = 2x + 1</b> using professional layers.<br>
+Click the button to train, then click the black box to edit the <b>learningRate</b> or the number of <b>epochs</b>!
+</div><br>
+
+<div id="myCodeSpace"> 
+  <input id="myButton1" type="button" value="Run torchjs05 Logic" onclick="{
+    (async function myGo() {
+      document.getElementById('myButton1').style.backgroundColor = 'red';
+      const myDisplay = document.getElementById('myDiv1');
+      myDisplay.innerHTML = ''; 
+
+      // 1. Setup Data - Matches torch05.py Step 2
+      const myInputs = tf.tensor2d([[1.0], [2.0], [3.0]]);
+      const myTargets = tf.tensor2d([[3.0], [5.0], [7.0]]);
+
+      // 2. Define the Model Class - Matches torch05.py class mySimpleBrain
+      const myModel = tf.sequential();
+      myModel.add(tf.layers.dense({units: 1, inputShape: [1]})); // This creates Weight and Bias automatically
+
+      // 3. Setup Optimizer and Loss - Matches torch05.py Step 3
+      const myLearningRate = 0.05;
+      const myOptimizer = tf.train.sgd(myLearningRate);
+      myModel.compile({optimizer: myOptimizer, loss: 'meanSquaredError'});
+
+      // 4. Training Loop - Matches torch05.py Step 2
+      const myEpochs = 201;
+      await myModel.fit(myInputs, myTargets, {
+          epochs: myEpochs,                                                                      
+          callbacks: { 
+            onEpochEnd: async (epoch, logs) => {                                                                                         
+              if (epoch % 50 === 0) {
+                 myDisplay.innerHTML += `Epoch ${epoch}: Loss ${logs.loss.toFixed(4)}<br>`;
+              }
+              await tf.nextFrame();  
+            }
+          }
+      });
+                                                                                
+      // 5. Test the Brain - Matches myModel(myTestNote)
+      const myTestVal = 10.0;
+      const myResult = await myModel.predict(tf.tensor2d([[myTestVal]])).data();
+      
+      myDisplay.innerHTML += `<br><b>Prediction for input 10: ${myResult[0].toFixed(2)}</b> (Should be 21)`;
+      
+      document.getElementById('myButton1').style.backgroundColor = 'lightgray';
+    })();
+  }"><br><br>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace;">...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  document.getElementById('myButton1').click();
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML/JS code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src=\'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0\'> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
+   
+   setTimeout(() => {
+      myArea.rows = myArea.value.split('\n').length + 3;
+   }, 100);
+}
+</script>
+
+</body>

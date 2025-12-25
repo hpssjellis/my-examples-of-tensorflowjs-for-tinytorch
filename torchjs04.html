@@ -1,0 +1,108 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">As easy as I can make torchjs04.html (Weight and Bias)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%;  border:5px solid blue; padding:5px; margin:5px;"> 
+This matches our <b>torch04.py</b> logic. We want the AI to find the rule <b>y = 2x + 1</b>.<br><br>
+Inputs: <b>[1, 2, 3]</b> | Targets: <b>[3, 5, 7]</b><br>
+We start with a random <b>myWeight</b> and <b>myBias</b> and let the "nudge" (gradient descent) find the correct values.<br>
+Click the button to train, then edit the <b>myLearningRate</b> in the code to see how it affects speed!
+</div><br>
+
+<div id="myCodeSpace"> 
+  <input id="myButton1" type="button" value="Run torchjs04 Logic" onclick="{
+    (async function myGo() {
+      const myDisplay = document.getElementById('myDiv1');
+      myDisplay.innerHTML = ''; 
+
+      // 1. Setup Data - Matches torch04.py Step 1
+      const myInputs = tf.tensor2d([[1.0], [2.0], [3.0]]);
+      const myTargets = tf.tensor2d([[3.0], [5.0], [7.0]]);
+
+      // Manual Weight and Bias variables
+      let myWeight = tf.variable(tf.scalar(0.5));
+      let myBias = tf.variable(tf.scalar(0.0));
+      const myLearningRate = 0.05;
+      const myEpochs = 201;
+
+      // 2. Training Loop - Matches torch04.py Step 2
+      for (let myEpoch = 0; myEpoch < myEpochs; myEpoch++) {
+        
+        // Use tf.grad to find the slope for BOTH Weight and Bias
+        // The loss is Mean Squared Error (MSE)
+        const myLossFunc = () => {
+          const myPredictions = myInputs.mul(myWeight).add(myBias);
+          return myPredictions.sub(myTargets).square().mean();
+        };
+
+        // Calculate gradients for our variables
+        const myGradsFunc = tf.grads(myLossFunc);
+        const [myWeightGrad, myBiasGrad] = myGradsFunc([myWeight, myBias]);
+
+        // Update Weight and Bias: Variable = Variable - (Rate * Gradient)
+        myWeight.assign(myWeight.sub(myWeightGrad.mul(myLearningRate)));
+        myBias.assign(myBias.sub(myBiasGrad.mul(myLearningRate)));
+
+        if (myEpoch % 50 === 0) {
+          const w = myWeight.dataSync()[0].toFixed(2);
+          const b = myBias.dataSync()[0].toFixed(2);
+          const loss = myLossFunc().dataSync()[0].toFixed(4);
+          myDisplay.innerHTML += `Epoch ${myEpoch}: Loss ${loss} | W: ${w} b: ${b}<br>`;
+          await tf.nextFrame(); 
+        }
+      }
+
+      // 3. Result - Matches torch04.py Step 3
+      const finalW = myWeight.dataSync()[0].toFixed(2);
+      const finalB = myBias.dataSync()[0].toFixed(2);
+      myDisplay.innerHTML += `<br><b>Final Rule: y = ${finalW}x + ${finalB}</b><br>`;
+      
+      const myTestVal = 10.0;
+      const myPrediction = (myTestVal * finalW) + parseFloat(finalB);
+      myDisplay.innerHTML += `If input is 10, prediction is: ${myPrediction.toFixed(2)} (Should be 21)`;
+
+    })();
+  }"><br><br>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace;">...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  document.getElementById('myButton1').click();
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML/JS code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src=\'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0\'> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
+   
+   setTimeout(() => {
+      myArea.rows = myArea.value.split('\n').length + 3;
+   }, 100);
+}
+</script>
+
+</body>

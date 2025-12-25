@@ -1,0 +1,94 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">As easy as I can make torchjs01.html (Linear Regression)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%;  border:5px solid blue; padding:5px; margin:5px;"> 
+This matches our <b>torch01.py</b> logic. It uses 3 fixed inputs and 3 targets where Target = Input * 2.<br><br>
+We define a <b>myModel</b> with 1 input and 1 output, then train it to find the pattern.<br>
+Click the button to train, then click the black box below to edit the code and try different learning rates or epochs.
+</div><br>
+
+<div id="myCodeSpace"> 
+  <input id="myButton1" type="button" value="Run torchjs01 Logic" onclick="{
+    (async function myGo() {
+      document.getElementById('myButton1').style.backgroundColor = 'red';
+      const myDisplay = document.getElementById('myDiv1');
+      
+      // 1. Create data (Tensors) - Matches torch01.py
+      const myInput = tf.tensor2d([[1.0], [2.0], [3.0]]);
+      const myTarget = tf.tensor2d([[2.0], [4.0], [6.0]]); 
+
+      // 2. Define model (1 input -> 1 output) - Matches torch.nn.Linear(1, 1)
+      const myModel = tf.sequential();
+      myModel.add(tf.layers.dense({units: 1, inputShape: [1]}));
+      
+      // 3. Optimizer & Loss - Matches SGD and MSELoss
+      const myOptimizer = tf.train.sgd(0.01); 
+      myModel.compile({optimizer: myOptimizer, loss: 'meanSquaredError'});    
+
+      // 4. Training Loop - Linked variable for students to edit easily
+      const myEpochs = 100;
+      await myModel.fit(myInput, myTarget, {
+          epochs: myEpochs,                                                                      
+          callbacks: { 
+            onEpochEnd: async (epoch, logs) => {                                                                                         
+              myDisplay.innerHTML = `Epoch: ${epoch + 1} / ${myEpochs}, Loss: ${logs.loss.toFixed(4)}`;
+              await tf.nextFrame();  
+            }
+          }
+      });
+                                                                                
+      // 5. Test the model - Matches myModel(torch.tensor([10.0]))
+      const myTestInput = tf.tensor2d([[10.0]]);
+      const myResult = await myModel.predict(myTestInput).data();
+      
+      myDisplay.innerHTML += `<br><br><b>Prediction for 10: ${myResult[0].toFixed(2)}</b>`;
+      myDisplay.innerHTML += `<br>(Expected: 20.00)`;
+      
+      document.getElementById('myButton1').style.backgroundColor = 'lightgray';
+    })();
+  }"><br><br>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace;">...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  document.getElementById('myButton1').click();
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML/JS code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   // Updated to use version 4.22.0
+   myArea.value = '\x3Cscript src=\'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0\'> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
+   
+   setTimeout(() => {
+      myArea.rows = myArea.value.split('\n').length + 3;
+   }, 100);
+}
+</script>
+
+</body>

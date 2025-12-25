@@ -1,0 +1,97 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">As easy as I can make torchjs03.html (Gradient Descent)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%;  border:5px solid blue; padding:5px; margin:5px;"> 
+This matches our <b>torch03.py</b> logic. We want the computer to find the square root of 25 by guessing.<br><br>
+Target: <b>25</b> | Starting Guess: <b>2.0</b> | Learning Rate: <b>0.003</b><br>
+The AI will calculate the slope of the error and "step" toward the correct answer 1000 times.<br>
+Edit the code below to change the target or the learning rate!
+</div><br>
+
+<div id="myCodeSpace"> 
+  <input id="myButton1" type="button" value="Run torchjs03 Logic" onclick="{
+    (async function myGo() {
+      const myDisplay = document.getElementById('myDiv1');
+      myDisplay.innerHTML = ''; // Clear previous runs
+
+      // 1. Initialization - Matches torch.tensor([2.0], requires_grad=True)
+      let myInput = tf.variable(tf.scalar(2.0));
+      const myTarget = 25.0;
+      const myLearningRate = 0.003;
+      const myEpochs = 2001;
+
+      // 2. The Training Loop - Matches for myEpoch in range(1001)
+      for (let myEpoch = 0; myEpoch < myEpochs; myEpoch++) {
+        
+        // Use tf.grad to get the slope of the loss
+        const myLossFunc = (x) => x.square().sub(myTarget).abs();
+        const myGradFunc = tf.grad(myLossFunc);
+        const myGrads = myGradFunc(myInput);
+
+        // 3. The Update Step - Matches myInput -= myLearningRate * myInput.grad
+        // We wrap in dataSync to get the raw numbers
+        const mySlope = myGrads.dataSync()[0];
+        const myOldVal = myInput.dataSync()[0];
+        const myNewVal = myOldVal - (myLearningRate * mySlope);
+
+        // Assign the new value back to our variable
+        myInput.assign(tf.scalar(myNewVal));
+
+        // 4. Print progress every 200 epochs
+        if (myEpoch % 200 === 0) {
+          const myCurrentGuess = myInput.dataSync()[0];
+          const myCurrentSquare = myCurrentGuess ** 2;
+          myDisplay.innerHTML += `Epoch ${myEpoch}: Guess is ${myCurrentGuess.toFixed(4)}, Square is ${myCurrentSquare.toFixed(4)}<br>`;
+          await tf.nextFrame(); // Keep UI alive
+        }
+      }
+
+      const myFinalGuess = myInput.dataSync()[0];
+      myDisplay.innerHTML += `<br>--- Final Results ---<br>Final Guess: ${myFinalGuess.toFixed(4)}<br>Final Square: ${(myFinalGuess**2).toFixed(4)}`;
+
+    })();
+  }"><br><br>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace;">...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  document.getElementById('myButton1').click();
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML/JS code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src=\'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0\'> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
+   
+   setTimeout(() => {
+      myArea.rows = myArea.value.split('\n').length + 3;
+   }, 100);
+}
+</script>
+
+</body>
