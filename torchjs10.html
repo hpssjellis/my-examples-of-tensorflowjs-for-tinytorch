@@ -1,0 +1,170 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs10.html - Disk & Local Persistence</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+This matches <b>torch10.py</b>. <b>Local</b> saves to this website's memory. 
+<b>Disk</b> saves to your computer's downloads.
+</div><br>
+
+<div id="myCodeSpace"> 
+  <select id="myCameraSelect"></select>
+  <input type="button" value="1. Start Camera & Brain" onclick="myStartAll()">
+  <input type="button" value="2. Train Background (B)" onclick="myCollect(0)">
+  <input type="button" value="3. Train Hand (H)" onclick="myCollect(1)"><br>
+  
+  <input type="button" value="Save Local" onclick="mySaveLocal()">
+  <input type="button" value="Load Local" onclick="myLoadLocal()"> | 
+  
+  <input type="button" value="Save Disk" onclick="mySaveDisk()">
+  <input type="text" id="myFileName" value="myModel" size="10">
+  <input type="button" value="Load Disk" onclick="document.getElementById('myFileLoader').click()">
+  <input type="file" id="myFileLoader" style="display:none" multiple onchange="myLoadDisk(this.files)"><br><br>
+
+  <video id="myVideo1" width="320" height="240" autoplay playsinline 
+    style="border: 5px solid black; background-color: #ddd;"></video>
+
+  <script>
+    var myModel;
+    var myHandFrames = [];
+    var myBackFrames = [];
+    var myLastLabel = 'BACKGRND';
+    const myLocalKey = 'localstorage://my-default-brain';
+
+    async function myStartAll() {
+      const myVideo = document.getElementById('myVideo1');
+      const myDisplay = document.getElementById('myDiv1');
+      const myHistory = document.getElementById('myDivHistory');
+      const myDeviceId = document.getElementById('myCameraSelect').value;
+      
+      const myStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+      });
+      myVideo.srcObject = myStream;
+
+      // Brain Architecture
+      myModel = tf.sequential();
+      myModel.add(tf.layers.conv2d({inputShape: [64, 64, 3], kernelSize: 5, filters: 8, strides: 4, activation: 'relu'}));
+      myModel.add(tf.layers.flatten());
+      myModel.add(tf.layers.dense({units: 32, activation: 'relu'}));
+      myModel.add(tf.layers.dense({units: 1, activation: 'sigmoid'})); 
+      myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'binaryCrossentropy'});
+
+      setInterval(async () => {
+        const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
+
+        if (myHandFrames.length > 0 && myBackFrames.length > 0) {
+            const myH = myHandFrames[Math.floor(Math.random() * myHandFrames.length)];
+            const myB = myBackFrames[Math.floor(Math.random() * myBackFrames.length)];
+            await myModel.trainOnBatch(tf.concat([myH, myB]), tf.tensor2d([1, 0], [2, 1]));
+        }
+
+        const myProb = (await myModel.predict(myInput).data())[0];
+        const myLabel = myProb > 0.5 ? 'HAND' : 'BACKGRND';
+        const myColor = myProb > 0.5 ? 'green' : 'red';
+
+        myDisplay.innerHTML = `LIVE Guess: <b style='color:${myColor}'>${myLabel}</b> (${myProb.toFixed(4)})<br>`;
+        myDisplay.innerHTML += `Buffers: Hand(${myHandFrames.length}) | Background(${myBackFrames.length})`;
+
+        if (myLabel === 'HAND' && myLastLabel === 'BACKGRND') {
+            const myTime = new Date().toLocaleTimeString();
+            myHistory.innerHTML = `[${myTime}] HAND DETECTED <br>` + myHistory.innerHTML;
+        }
+        myLastLabel = myLabel;
+        myInput.dispose();
+      }, 100);
+    }
+
+    // --- REFINED PERSISTENCE ---
+
+    async function mySaveLocal() {
+      await myModel.save(myLocalKey);
+      alert('Brain saved to Website Local Storage');
+    }
+
+    async function myLoadLocal() {
+      try {
+        myModel = await tf.loadLayersModel(myLocalKey);
+        myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'binaryCrossentropy'});
+        alert('Brain loaded from Website Local Storage');
+      } catch (e) { alert('No local brain found.'); }
+    }
+
+    async function mySaveDisk() {
+      const myName = document.getElementById('myFileName').value;
+      // Triggers direct download to browser downloads folder
+      await myModel.save('downloads://' + myName);
+    }
+
+    async function myLoadDisk(myFiles) {
+      // Students should select both the .json and .bin from their folder
+      if (myFiles.length < 2) {
+        alert('Please select both the .json and .bin files together.');
+        return;
+      }
+      myModel = await tf.loadLayersModel(tf.io.browserFiles(myFiles));
+      myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'binaryCrossentropy'});
+      alert('Brain loaded from Disk files.');
+    }
+
+    function myCollect(myID) {
+      const myVideo = document.getElementById('myVideo1');
+      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
+      if (myID === 1) { myHandFrames.push(myFrame); } 
+      else { myBackFrames.push(myFrame); }
+    }
+  </script>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
+
+<b>Movement History:</b>
+<div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 150px; overflow-y: scroll; background-color: #f0f0f0;">Log will appear here...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myStartAll(); 
+}"><br>
+
+<textarea id="myTextarea1" wrap="off" 
+  style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
+  onclick="{
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}">
+Click here to see the working HTML code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+(async function myListCameras() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div><div id=\'myDivHistory\'>...</div>';
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
+}
+</script>
+
+</body>

@@ -1,0 +1,182 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs13.html - Persistent Validation</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+<b>Load-Safe:</b> This version ensures the <b>Exam Score</b> works even after loading a brain from disk.<br>
+<b>Note:</b> You must capture at least one new frame for B, H, and P after loading to see the score!
+</div><br>
+
+<div id="myCodeSpace"> 
+  <select id="myCameraSelect"></select>
+  <input type="button" value="1. Start Camera & Brain" onclick="myStartAll()">
+  <input type="button" value="2. Train Background (B)" onclick="myCollect(0)">
+  <input type="button" value="3. Train Hand (H)" onclick="myCollect(1)">
+  <input type="button" value="4. Train Object (P)" onclick="myCollect(2)"><br>
+  
+  <input type="button" value="Save Local" onclick="mySaveLocal()">
+  <input type="button" value="Load Local" onclick="myLoadLocal()"> | 
+  
+  <input type="button" value="Save Disk" onclick="mySaveDisk()">
+  <input type="text" id="myFileName" value="myModel13" size="10">
+  <input type="button" value="Load Disk" onclick="document.getElementById('myFileLoader').click()">
+  <input type="file" id="myFileLoader" style="display:none" multiple onchange="myLoadDisk(this.files)"><br><br>
+
+  <video id="myVideo1" width="320" height="240" autoplay playsinline 
+    style="border: 5px solid black; background-color: #ddd;"></video>
+
+  <script>
+    var myModel;
+    var myTrainData = {0: [], 1: [], 2: []}; 
+    var myValData = {0: [], 1: [], 2: []}; 
+    var myClassNames = {0: "BACKGROUND", 1: "HAND", 2: "OBJECT"};
+    var myLastClassID = -1;
+    var myValAccuracy = 0;
+    const myLocalKey = 'localstorage://my-default-brain-13';
+
+    async function myStartAll() {
+      const myVideo = document.getElementById('myVideo1');
+      const myDisplay = document.getElementById('myDiv1');
+      const myHistory = document.getElementById('myDivHistory');
+      const myDeviceId = document.getElementById('myCameraSelect').value;
+      
+      const myStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+      });
+      myVideo.srcObject = myStream;
+
+      myModel = tf.sequential();
+      myModel.add(tf.layers.conv2d({inputShape: [64, 64, 3], kernelSize: 5, filters: 8, strides: 4, activation: 'relu'}));
+      myModel.add(tf.layers.flatten());
+      myModel.add(tf.layers.dense({units: 32, activation: 'relu'}));
+      myModel.add(tf.layers.dense({units: 3, activation: 'softmax'})); 
+
+      myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+
+      setInterval(async () => {
+        const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
+
+        // --- TRAINING ---
+        if (myTrainData[0].length > 0 && myTrainData[1].length > 0 && myTrainData[2].length > 0) {
+            const myBatchInputs = tf.concat([
+                myTrainData[0][Math.floor(Math.random() * myTrainData[0].length)],
+                myTrainData[1][Math.floor(Math.random() * myTrainData[1].length)],
+                myTrainData[2][Math.floor(Math.random() * myTrainData[2].length)]
+            ]);
+            const myBatchLabels = tf.tensor2d([[1,0,0], [0,1,0], [0,0,1]]);
+            await myModel.trainOnBatch(myBatchInputs, myBatchLabels);
+        }
+
+        // --- VALIDATION (Only runs if buffers aren't empty) ---
+        if (myValData[0].length > 0 && myValData[1].length > 0 && myValData[2].length > 0) {
+            const myExamInputs = tf.concat([
+                myValData[0][Math.floor(Math.random() * myValData[0].length)],
+                myValData[1][Math.floor(Math.random() * myValData[1].length)],
+                myValData[2][Math.floor(Math.random() * myValData[2].length)]
+            ]);
+            const myExamOut = myModel.predict(myExamInputs);
+            const myExamPreds = myExamOut.argMax(1).dataSync();
+            
+            let myCorrectCount = 0;
+            if (myExamPreds[0] === 0) myCorrectCount++;
+            if (myExamPreds[1] === 1) myCorrectCount++;
+            if (myExamPreds[2] === 2) myCorrectCount++;
+            
+            myValAccuracy = (myCorrectCount / 3.0) * 100;
+            myExamOut.dispose();
+            myExamInputs.dispose();
+        }
+
+        const myPredict = myModel.predict(myInput);
+        const myClassID = (await myPredict.argMax(1).data())[0];
+        const myConf = (await myPredict.data())[myClassID];
+
+        myDisplay.innerHTML = `LIVE: <b>${myClassNames[myClassID]}</b> (${myConf.toFixed(2)})<br>`;
+        myDisplay.innerHTML += `Exam Score: <b>${myValData[0].length > 0 ? myValAccuracy.toFixed(1) + '%' : 'Waiting for frames...'}</b><br>`;
+        myDisplay.innerHTML += `Training B/H/P: ${myTrainData[0].length}/${myTrainData[1].length}/${myTrainData[2].length}`;
+
+        if (myClassID !== myLastClassID) {
+            const myTime = new Date().toLocaleTimeString();
+            myHistory.innerHTML = `[${myTime}] Guess: ${myClassNames[myClassID]}<br>` + myHistory.innerHTML;
+        }
+        myLastClassID = myClassID;
+        myInput.dispose();
+        myPredict.dispose();
+      }, 100);
+    }
+
+    // --- Persistence Row Functions (UI Updated to Alert Load Success) ---
+
+    async function mySaveLocal() {
+      await myModel.save(myLocalKey);
+      alert('Brain saved to browser.');
+    }
+
+    async function myLoadLocal() {
+      try {
+        myModel = await tf.loadLayersModel(myLocalKey);
+        myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+        alert('Brain loaded from local memory.');
+      } catch (e) { alert('No local brain found.'); }
+    }
+
+    async function mySaveDisk() {
+      const myName = document.getElementById('myFileName').value;
+      await myModel.save('downloads://' + myName);
+    }
+
+    async function myLoadDisk(myFileList) {
+      if (myFileList.length < 2) {
+        alert('Select both .json and .bin files.');
+        return;
+      }
+      let myFiles = Array.from(myFileList);
+      myFiles.sort((a, b) => a.name.endsWith('.json') ? -1 : 1);
+      let myLoadedName = myFiles[0].name.replace('.json', '');
+
+      try {
+        myModel = await tf.loadLayersModel(tf.io.browserFiles(myFiles));
+        myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+        document.getElementById('myFileName').value = myLoadedName;
+        alert('Success! Brain loaded: ' + myLoadedName);
+      } catch (myError) {
+        alert('Load failed: ' + myError.message);
+      }
+    }
+
+    function myCollect(myID) {
+      const myVideo = document.getElementById('myVideo1');
+      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
+      
+      // 80/20 Split
+      if (Math.random() < 0.2) {
+        myValData[myID].push(myFrame);
+        if (myValData[myID].length > 10) myValData[myID].shift();
+      } else {
+        myTrainData[myID].push(myFrame);
+        if (myTrainData[myID].length > 15) myTrainData[myID].shift();
+      }
+    }
+  </script>
+</div>
+
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
+
+<b>Detection History:</b>
+<div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 150px; overflow-y: scroll; background-color: #f0f0f0;">Log...</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+Click to see code...
+</textarea>
+
+<script>
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.rows = myArea.value.split('\n').length + 3;
+}
+</script>
+
+</body>
