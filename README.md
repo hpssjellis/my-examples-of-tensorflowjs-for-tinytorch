@@ -1,5 +1,5 @@
 # my-examples-of-tensorflowjs-for-tinytorch
-as above
+
 
 This page as a web page index.
 
@@ -8,7 +8,11 @@ https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/
 
 
 
+<img width="2048" height="2048" alt="image" src="https://github.com/user-attachments/assets/2247019e-524d-4cc0-8087-b717466cebd3" />
+
+
 ![Uploading image.png…]()
+
 
 
 
@@ -35,24 +39,28 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 
 
-## 🚀 The Full Curriculum (Browser-Based AI)
+## 🚀 The Full Curriculum (Math to Microcontroller)
 
 | File | Title | Concept Learned | tinyTorch Chapter |
 | :--- | :--- | :--- | :--- |
-| **torchjs01** | Tensor Basics | Creating tensors in JavaScript and managing GPU memory. | **1.1** The Tensor Class |
-| **torchjs02** | Automatic Gradients | Using `tf.variable` and `tf.tidy` for derivatives. | **1.2** Automatic Differentiation |
-| **torchjs03** | Linear Regression | Solving $y = mx + b$ inside a `<canvas>`. | **2.1** Linear Regression |
-| **torchjs04** | The Single Neuron | Building a `tf.sequential` model with one layer. | **2.2** Neurons & Perceptrons |
-| **torchjs05** | Hidden Thoughts | Deep Networks with ReLU activation in the browser. | **3.1** Multi-Layer Perceptrons |
-| **torchjs06** | Browser Optimizers | Watching the Adam optimizer find answers in real-time. | **3.2** Optimization Algorithms |
-| **torchjs07** | Camera Streaming | Connecting `getUserMedia` to a video tag and canvas. | **4.1** Data Loading |
-| **torchjs08** | Frame Differencing | Basic Computer Vision: Finding motion between frames. | **4.2** Basic Image Ops |
-| **torchjs09** | Live Binary Classifier | Training the brain on "Hand" vs "No Hand" via webcam. | **5.1** Binary Classification |
-| **torchjs10** | Local Storage | Saving and Loading model weights to the Downloads folder. | **6.1** Model Serialization |
-| **torchjs11** | Softmax 3-Class | Teaching the AI to distinguish between three unique items. | **5.2** Softmax & Entropy |
-| **torchjs12** | Tensor Manipulation | Cropping and resizing camera pixels for the brain. | **4.3** Augmentation |
-| **torchjs13** | Validation Exam | Creating an 80/20 data split for automatic testing. | **7.1** Evaluation |
-| **torchjs14** | X-Ray Filter View | Visualizing Convolutional Feature Maps on a grid. | **8.1** Visualization |
-| **torchjs15** | C Header Exporter | Generating `.h` files for ESP32-S3 Arduino deployment. | **9.1** Deployment Bridge |
-| **torchjs16** | MNIST Data Fetcher | Manual internet fetching of 60,000 professional digits. | **10.1** Standard Datasets |
-| **torchjs17** | Live Scanner & Log | Real-time OCR with Adaptive Thresholding and history log. | **10.2** Real-world Inference |
+| [**torchjs01**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs01.html) | Scalar Tensors | Creating basic numbers and the "Tensor" data type. | [**1.1** The Tensor Class](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs02**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs02.html) | Autograd Math | How TFjs tracks math history for derivatives. | [**1.2** Differentiation](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs03**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs03.html) | Linear Regression | Solving the $y = mx + b$ line equation. | [**2.1** Linear Regression](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs04**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs04.html) | The First Neuron | Building a single-layer neural network. | [**2.2** Neurons & Perceptrons](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs05**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs05.html) | Hidden Layers | Adding "inner thoughts" for non-linear problems. | [**3.1** Multi-Layer Perceptrons](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs06**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs06.html) | Optimizers | Using SGD and Adam to "walk" toward the answer. | [**3.2** Optimization](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs07**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs07.html) | Camera Intro | Connecting the webcam to the browser canvas. | [**4.1** Data Loading](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs08**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs08.html) | Motion Detect | Using frame differencing to see movement. | [**4.2** Image Ops](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs09**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs09.html) | Binary Classifier | Training the brain to see "Hand" vs "Background". | [**5.1** Binary Classification](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs10**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs10.html) | Persistent Memory | Saving and Loading weights to local files. | [**6.1** Serialization](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs11**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs11.html) | Multiclass Logic | Expanding to 3+ classes (Hand, Object, Empty). | [**5.2** Softmax & Entropy](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs12**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs12.html) | Data Augment | Cropping and resizing images to make AI smarter. | [**4.3** Augmentation](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs13**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs13.html) | Validation Logic | Using 20% of data to "test" the brain's honesty. | [**7.1** Evaluation](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs14**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs14.html) | Feature Maps | Visualizing the Conv1 filters (The Brain's Eyes). | [**8.1** Visualization](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs15**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs15.html) | Export Master | Converting weights to C++ Header (.h) arrays. | [**9.1** Deployment Bridge](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs16**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs16.html) | MNIST Trainer | Training on 60,000 professional digit samples. | [**10.1** Standard Datasets](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs17**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs17.html) | Live Digit Reader | Live webcam OCR using Adaptive Thresholding. | [**10.2** Real-world Inference](https://mlsysbook.ai/tinytorch/intro.html) |
+
+[**Big Picture Overview**](https://mlsysbook.ai/tinytorch/big-picture.html)
+
+
