@@ -65,4 +65,15 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 
 
+## To do until finished
 
+Quick Statements on Future Webpages:
+torchjs18 (Tokenizer): A webpage where students type a sentence and instantly see it turn into a list of numbers.
+
+torchjs19 (Embeddings): A 3D visualizer showing why the word "King" is mathematically close to "Queen."
+
+torchjs20 (Attention): A tool that highlights words in a sentence to show how the AI connects "The cat" to "it" automatically.
+
+torchjs22 (Quantization): A "Shrink-O-Meter" that shows a model's file size dropping from 10MB to 2MB as students lower the precision.
+
+torchjs24 (Benchmarker): A real-time dashboard showing how many numbers-per-second your specific phone or laptop can process.
