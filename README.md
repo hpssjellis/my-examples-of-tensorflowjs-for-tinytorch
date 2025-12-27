@@ -43,8 +43,8 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 | File | Title | Concept Learned | tinyTorch Chapter |
 | :--- | :--- | :--- | :--- |
-| [**torchjs01**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs01.html) | Scalar Tensors | Creating basic numbers and the "Tensor" data type. | [**1.1** The Tensor Class](https://mlsysbook.ai/tinytorch/intro.html) |
-| [**torchjs02**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs02.html) | Autograd Math | How TFjs tracks math history for derivatives. | [**1.2** Differentiation](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs01**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs01.html) | Scalar Tensors | Creating basic numbers and the "Tensor" data type. | [**1.1** The Tensor Class](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html#constructor) |
+| [**torchjs02**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs02.html) | Autograd Math | How TFjs tracks math history for derivatives. | [**1.2** Differentiation](https://mlsysbook.ai/tinytorch/modules/06_autograd_ABOUT.html) |
 | [**torchjs03**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs03.html) | Linear Regression | Solving the $y = mx + b$ line equation. | [**2.1** Linear Regression](https://mlsysbook.ai/tinytorch/intro.html) |
 | [**torchjs04**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs04.html) | The First Neuron | Building a single-layer neural network. | [**2.2** Neurons & Perceptrons](https://mlsysbook.ai/tinytorch/intro.html) |
 | [**torchjs05**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs05.html) | Hidden Layers | Adding "inner thoughts" for non-linear problems. | [**3.1** Multi-Layer Perceptrons](https://mlsysbook.ai/tinytorch/intro.html) |
