@@ -8,10 +8,10 @@ https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/
 
 
 
-<img width="2048" height="2048" alt="image" src="https://github.com/user-attachments/assets/2247019e-524d-4cc0-8087-b717466cebd3" />
+<img width="1024"  alt="image" src="https://github.com/user-attachments/assets/2247019e-524d-4cc0-8087-b717466cebd3" />
 
 
-![Uploading image.png…]()
+
 
 
 
