@@ -60,20 +60,24 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 | [**torchjs15.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs15.html) | Export Master | Converting weights to C++ Header (.h) arrays. | [**9.1** Deployment Bridge](https://mlsysbook.ai/tinytorch/modules/09_convolutions_ABOUT.html) |
 | [**torchjs16.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs16.html) | MNIST Trainer | Training on 60,000 professional digit samples. | [**10.1** Standard Datasets](https://mlsysbook.ai/tinytorch/modules/09_convolutions_ABOUT.html) |
 | [**torchjs17.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs17.html) | Live Digit Reader | Live webcam OCR using Adaptive Thresholding. | [**10.2** Real-world Inference](https://mlsysbook.ai/tinytorch/modules/09_convolutions_ABOUT.html) |
+[**torchjs18.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs18.html) | Tokenization | Turning words into numbers (Vocabulary IDs). | [**11.1** Text Processing](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs19.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs19.html) | Word Embeddings | Vector math: Moving words into a semantic map. | [**11.2** Embedding Layers](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs20.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs20.html) | Self-Attention | The "Focus" mechanism: How words relate to context. | [**12.1** Attention](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs21.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs21.html) | Probabilistic AI | Predicting the next word using Softmax weights. | [**13.1** Transformers](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs22.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs22.html) | Quantization | Shrinking bits (32-bit to 8-bit) for tiny chips. | [**14.1** Compression](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs23.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs23.html) | Brain Pruning | Deleting "lazy" neurons to speed up the network. | [**15.1** Pruning Ops](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs24.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs24.html) | Performance Lab | Benchmarking Latency and FPS in real-time. | [**16.1** Benchmarking](https://mlsysbook.ai/tinytorch/intro.html) |
+| [**torchjs25.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs25.html) | The Memory Guard | Debugging GPU leaks with `.dispose()` logic. | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
+
+
+
+
+
+
+
 
 [**Big Picture Overview**](https://mlsysbook.ai/tinytorch/big-picture.html)
 
 
 
-## To do until finished
 
-Quick Statements on Future Webpages:
-torchjs18 (Tokenizer): A webpage where students type a sentence and instantly see it turn into a list of numbers.
-
-torchjs19 (Embeddings): A 3D visualizer showing why the word "King" is mathematically close to "Queen."
-
-torchjs20 (Attention): A tool that highlights words in a sentence to show how the AI connects "The cat" to "it" automatically.
-
-torchjs22 (Quantization): A "Shrink-O-Meter" that shows a model's file size dropping from 10MB to 2MB as students lower the precision.
-
-torchjs24 (Benchmarker): A real-time dashboard showing how many numbers-per-second your specific phone or laptop can process.
