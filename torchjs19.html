@@ -1,0 +1,119 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs19.html - Vector Map Lab</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+<b>Step 19 Logic:</b> Word Embeddings & Semantic Maps.<br>
+<b>Student Activity:</b> Edit the coordinates in the blue box to move words. Select a word to see its "Semantic Distance" from others.
+</div><br>
+
+<div id="myCodeSpace">
+  <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
+    
+    <div style="flex: 1.5; min-width: 300px; border: 2px solid green; padding: 10px; text-align: center;">
+      <b>AI Semantic Map (2D)</b><br>
+      <canvas id="myCanvas1" width="400" height="300" style="border:1px solid black; background: #fafafa;"></canvas>
+    </div>
+
+    <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
+      <b>1. Select Focal Word:</b><br>
+      <select id="myWordSelect" onchange="myDrawMap()" style="font-size:18px; width:95%;"></select>
+      <br><br>
+      <b>2. Edit All Coordinates (JSON):</b><br>
+      <textarea id="myEmbeddingData" rows="8" style="width: 95%; font-family: monospace;" oninput="myDrawMap()">
+{
+  "king": [50, 50],
+  "queen": [65, 75],
+  "apple": [300, 200],
+  "orange": [330, 210],
+  "happy": [50, 220],
+  "sad": [70, 280],
+  "robot": [200, 150]
+}
+      </textarea>
+    </div>
+  </div>
+
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff; min-height: 80px;">
+    Waiting for map initialization...
+  </div>
+
+  <script>
+    // Simple JS using descriptive names and no EventListeners
+    async function myDrawMap() {
+      const myCanvas = document.getElementById('myCanvas1');
+      const myCtx = myCanvas.getContext('2d');
+      const myRaw = document.getElementById('myEmbeddingData').value;
+      const mySelect = document.getElementById('myWordSelect');
+      const myPrevVal = mySelect.value;
+      
+      myCtx.clearRect(0, 0, myCanvas.width, myCanvas.height);
+      
+      try {
+        const myMap = JSON.parse(myRaw);
+        
+        // Refresh Select list if count changed
+        if (Object.keys(myMap).length !== mySelect.options.length) {
+          mySelect.innerHTML = "";
+          Object.keys(myMap).forEach(w => {
+            let myOpt = document.createElement('option');
+            myOpt.value = w; myOpt.text = w;
+            mySelect.add(myOpt);
+          });
+          mySelect.value = myPrevVal || "king";
+        }
+
+        const mySelectedWord = mySelect.value;
+        const [focalX, focalY] = myMap[mySelectedWord];
+        let myReport = `<b>Semantic Distances from "${mySelectedWord}":</b><br>`;
+        
+        Object.keys(myMap).forEach(myWord => {
+          const [myX, myY] = myMap[myWord];
+          const isFocal = (myWord === mySelectedWord);
+          
+          // Draw Word on Canvas
+          myCtx.fillStyle = isFocal ? "blue" : "red";
+          myCtx.beginPath();
+          myCtx.arc(myX, myY, isFocal ? 7 : 4, 0, Math.PI * 2);
+          myCtx.fill();
+          
+          myCtx.fillStyle = "black";
+          myCtx.font = isFocal ? "bold 14px Arial" : "12px Arial";
+          myCtx.fillText(myWord, myX + 8, myY + 5);
+
+          // Calculate Euclidean Distance
+          if (!isFocal) {
+            const myDist = Math.sqrt(Math.pow(myX - focalX, 2) + Math.pow(myY - focalY, 2)).toFixed(1);
+            myReport += `${myWord}: ${myDist}px ${myDist < 60 ? '⭐ (Related)' : ''}<br>`;
+          }
+        });
+
+        // Show result in the summary box
+        document.getElementById('myDivHistory').innerHTML = myReport;
+
+      } catch(e) {
+         document.getElementById('myDivHistory').innerHTML = "<b style='color:red;'>JSON Error! Check your syntax.</b>";
+      }
+    }
+
+    window.onload = myDrawMap;
+  </script>
+</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+Click here to see the internal Vector Map source code (including reporting logic)...
+</textarea>
+
+<script>
+// Function to capture everything inside myCodeSpace
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
+   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
+   myArea.rows = myArea.value.split('\n').length + 3;
+}
+</script>
+
+</body>

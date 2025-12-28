@@ -1,0 +1,96 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs22.html - Model Quantization</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+<b>Step 22 Logic:</b> Model Compression.<br>
+<b>The Challenge:</b> Move the slider to the left to "Quantize" the weights. Can the AI still recognize the digit when the numbers are tiny?
+</div><br>
+
+<div id="myCodeSpace">
+  <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
+    
+    <div style="flex: 1; min-width: 300px; border: 2px solid green; padding: 10px;">
+      <b>1. Precision Control:</b><br>
+      <input type="range" id="mySlider" min="1" max="32" value="32" style="width: 80%;" oninput="myQuantize()">
+      <span id="myBits">32</span> bits<br><br>
+      
+      <b>Model Memory Size:</b> 
+      <span id="mySize" style="font-size: 20px; color: red; font-weight: bold;">4.0 MB</span>
+    </div>
+
+    <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
+      <b>2. Raw Weights (The Brain's Data):</b><br>
+      <div id="myWeightList" style="font-family: monospace; font-size: 14px; background: #eee; padding: 5px; height: 120px; overflow-y: scroll;">
+        0.87654321, -0.12345678, 0.45678901...
+      </div>
+    </div>
+  </div>
+
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff;">
+    AI Accuracy: 99.2% (Full Precision)
+  </div>
+
+  <script>
+    // Standard descriptive naming
+    async function myQuantize() {
+      const myBits = document.getElementById('mySlider').value;
+      const mySizeText = document.getElementById('mySize');
+      const myWeightBox = document.getElementById('myWeightList');
+      const myHistory = document.getElementById('myDivHistory');
+      
+      document.getElementById('myBits').innerHTML = myBits;
+
+      // 1. Calculate Simulated Size
+      // Float32 = 4MB, so 8-bit = 1MB
+      const myMB = (myBits / 32 * 4).toFixed(2);
+      mySizeText.innerHTML = myMB + " MB";
+
+      // 2. Simulate Weight Precision Loss
+      const myOriginalWeights = [0.876543, -0.123456, 0.456789, -0.987654, 0.234567];
+      let myNewWeights = [];
+      
+      // Math: Rounding to the nearest 'step' based on bits
+      const mySteps = Math.pow(2, myBits);
+      myOriginalWeights.forEach(w => {
+         let myQuantized = Math.round(w * mySteps) / mySteps;
+         myNewWeights.push(myQuantized.toFixed(myBits < 8 ? 2 : 6));
+      });
+
+      myWeightBox.innerHTML = myNewWeights.join(", <br>");
+
+      // 3. Performance impact logic
+      let myAcc = 99.2;
+      if (myBits < 8) myAcc = (myAcc - (8 - myBits) * 10).toFixed(1);
+      if (myAcc < 10) myAcc = 10.0; // Baseline random guess
+
+      myHistory.innerHTML = `<b>Compression Result:</b><br>
+        Bits: ${myBits}<br>
+        Estimated Accuracy: ${myAcc}%<br>
+        Status: ${myBits < 4 ? '<span style="color:red;">WARNING: Model Corrupted</span>' : '<span style="color:green;">Safe for ESP32</span>'}`;
+      
+      // Real Tensor Example
+      const myTensor = tf.tensor1d(myNewWeights.map(Number));
+      myTensor.dispose();
+    }
+
+    window.onload = myQuantize;
+  </script>
+</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+Click to see the Quantization math...
+</textarea>
+
+<script>
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
+   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
+   myArea.rows = myArea.value.split('\n').length + 3;
+}
+</script>
+
+</body>

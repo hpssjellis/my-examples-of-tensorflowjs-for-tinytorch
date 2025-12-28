@@ -1,0 +1,96 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs18.html - Live Text Tokenizer</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+<b>Step 18 Logic:</b> Words to Numbers (Tokenization).<br>
+<b>Live Edit:</b> Use the boxes below to change the Vocab or click the code box at the bottom to see the full source!
+</div><br>
+
+<div id="myCodeSpace">
+  <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
+    <div style="flex: 1; min-width: 300px; border: 2px solid green; padding: 10px;">
+      <b>1. Type Your Sentence:</b><br>
+      <textarea id="myInputText" rows="3" style="width: 95%; font-size: 18px;" oninput="myTokenize()"></textarea>
+      <br><br>
+      <b>2. AI Output (The Tensor):</b><br>
+      <div id="myTensorView" style="font-family: monospace; background: black; color: lime; padding: 10px; min-height: 40px; font-size: 20px;">[ ]</div>
+    </div>
+
+    <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
+      <b>3. Edit Vocabulary (JSON):</b><br>
+      <textarea id="myVocabList" rows="8" style="width: 95%; font-family: monospace;" oninput="myTokenize()">
+{
+  "the": 1,
+  "cat": 2,
+  "sat": 3,
+  "on": 4,
+  "mat": 5,
+  "robot": 6,
+  "is": 7,
+  "happy": 8
+}
+      </textarea>
+    </div>
+  </div>
+
+  <script>
+    // Uses simple async/await and descriptive names
+    async function myTokenize() {
+      const myText = document.getElementById('myInputText').value.toLowerCase();
+      const myVocabRaw = document.getElementById('myVocabList').value;
+      const myHistory = document.getElementById('myDivHistory');
+      
+      let myVocab = {};
+      try {
+        myVocab = JSON.parse(myVocabRaw);
+      } catch(e) {
+        document.getElementById('myTensorView').innerHTML = "JSON Format Error...";
+        return;
+      }
+
+      // Split words and remove empty spaces
+      const myWords = myText.split(/\s+/).filter(w => w.length > 0);
+      
+      // Tokenization: Map words to IDs from our dictionary
+      const myIDs = myWords.map(w => myVocab[w] || 0);
+
+      if (myIDs.length > 0) {
+        // Show the 1D Tensor result
+        document.getElementById('myTensorView').innerHTML = "[" + myIDs.join(", ") + "]";
+        
+        let myReport = `<b>Conversion Details:</b><br>`;
+        myWords.forEach((w, i) => {
+          myReport += `Word: "<b>${w}</b>" &rarr; ID: ${myIDs[i]} ${myIDs[i] === 0 ? '(Unknown)' : ''}<br>`;
+        });
+        myHistory.innerHTML = myReport;
+      } else {
+        document.getElementById('myTensorView').innerHTML = "[ ]";
+        myHistory.innerHTML = "Waiting for input...";
+      }
+    }
+    
+    // Auto-run once on load
+    window.onload = myTokenize;
+  </script>
+</div>
+
+<div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #fff4e6; min-height: 80px;">...</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+Click here to see the internal AI code...
+</textarea>
+
+<script>
+// Logic to expand and show the internal HTML
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
+   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
+   myArea.rows = myArea.value.split('\n').length + 3;
+}
+</script>
+
+</body>

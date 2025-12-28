@@ -1,0 +1,101 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs23.html - Brain Pruning</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+<b>Step 23 Logic:</b> Network Pruning.<br>
+<b>Instructions:</b> Move the slider to "Cut" connections. Watch the brain diagram to see neurons disappear!
+</div><br>
+
+<div id="myCodeSpace">
+  <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
+    
+    <div style="flex: 1; min-width: 300px; border: 2px solid green; padding: 10px;">
+      <b>1. Pruning Threshold:</b><br>
+      <input type="range" id="myPruneSlider" min="0" max="100" value="0" style="width: 80%;" oninput="myPrune()">
+      <span id="myPercent">0</span>% Cut<br><br>
+      
+      <b>Active Connections:</b> 
+      <span id="myCount" style="font-size: 20px; color: blue; font-weight: bold;">1000</span>
+    </div>
+
+    <div style="flex: 1.5; min-width: 300px; border: 2px solid blue; padding: 10px; text-align: center;">
+      <b>2. Neuron Connection Map:</b><br>
+      <canvas id="myBrainCanvas" width="300" height="200" style="border:1px solid black; background: #111;"></canvas>
+    </div>
+  </div>
+
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff;">
+    Brain Health: 100% Functional
+  </div>
+
+  <script>
+    // Descriptive names and simple JS
+    const myBaseWeights = [];
+    for(let i=0; i<200; i++) myBaseWeights.push(Math.random() * 2 - 1); // Mock weights -1 to 1
+
+    async function myPrune() {
+      const myThreshold = document.getElementById('myPruneSlider').value / 100;
+      const myCanvas = document.getElementById('myBrainCanvas');
+      const myCtx = myCanvas.getContext('2d');
+      const myHistory = document.getElementById('myDivHistory');
+      
+      document.getElementById('myPercent').innerHTML = (myThreshold * 100).toFixed(0);
+      myCtx.clearRect(0, 0, myCanvas.width, myCanvas.height);
+
+      let myActiveCount = 0;
+      
+      // Draw simulated connections
+      myBaseWeights.forEach((w, i) => {
+        // Logical "Pruning": If weight is near zero, skip it!
+        if (Math.abs(w) > myThreshold) {
+          myActiveCount++;
+          const myX = (i % 20) * 15 + 10;
+          const myY = Math.floor(i / 20) * 20 + 10;
+          
+          myCtx.strokeStyle = w > 0 ? `rgba(0, 255, 0, ${Math.abs(w)})` : `rgba(255, 0, 0, ${Math.abs(w)})`;
+          myCtx.beginPath();
+          myCtx.moveTo(myX, myY);
+          myCtx.lineTo(myX + 10, myY + 15);
+          myCtx.stroke();
+        }
+      });
+
+      document.getElementById('myCount').innerHTML = myActiveCount * 5; // Simulating total network scale
+
+      // Intelligence impact logic
+      let myStatus = "Healthy";
+      let myColor = "green";
+      if (myThreshold > 0.4) { myStatus = "Slightly Confused"; myColor = "orange"; }
+      if (myThreshold > 0.7) { myStatus = "Brain Dead"; myColor = "red"; }
+
+      myHistory.innerHTML = `<b>Pruning Report:</b><br>
+        Status: <b style="color:${myColor}">${myStatus}</b><br>
+        Efficiency: AI is now ${ (myThreshold * 50).toFixed(0) }% faster.<br>
+        Tensor Check: Pruned ${200 - myActiveCount} near-zero values.`;
+      
+      // Simple tensor cleanup
+      const myDummyTensor = tf.tensor1d(myBaseWeights);
+      myDummyTensor.dispose();
+    }
+
+    window.onload = myPrune;
+  </script>
+</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+Click to see the Pruning logic...
+</textarea>
+
+<script>
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
+   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
+   myArea.rows = myArea.value.split('\n').length + 3;
+}
+</script>
+
+</body>

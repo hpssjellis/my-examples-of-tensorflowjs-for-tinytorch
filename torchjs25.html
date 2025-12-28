@@ -1,0 +1,138 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs25.html - The Memory Guard</h2>
+
+<div style="font-size:15px; background-color:#ffcccc; width:88%; border:5px solid red; padding:10px; margin:5px;"> 
+  <b>Teacher's Repair Hint:</b> High GPU usage is caused by "Orphaned" Tensors. 
+  <br><br>
+  <b>Activity:</b> 
+  1. Click <b>START BAD LOOP</b>. Watch the memory skyrocket! <br>
+  2. Click <b>STOP & CLEAN</b> to empty the GPU.<br>
+  3. Click the <b>Black Box</b>. Look for the commented out <code>.dispose()</code> lines.<br>
+  4. Uncomment them and click <b>UPDATE AND RUN</b>.
+</div><br>
+
+<div id="myCodeSpace">
+  <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
+    
+    <div style="flex: 1; min-width: 300px; border: 2px solid red; padding: 10px;">
+      <b>1. Memory Testing:</b><br><br>
+      <input type="button" value="START BAD LOOP" onclick="myStartBad()" style="background:red; color:white; padding:10px;">
+      <input type="button" value="STOP & CLEAN" onclick="myStopAndClean()" style="background:green; color:white; padding:10px;">
+      <p><small>The "Bad" loop forgets to delete tensors, causing a crash.</small></p>
+    </div>
+
+    <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
+      <b>2. GPU Real-Time Monitor:</b><br><br>
+      <div style="font-size: 22px; font-family: monospace;">
+        Tensors: <span id="myTensorCount" style="color:red; font-weight:bold;">0</span><br>
+        Memory: <span id="myMemBytes" style="color:blue; font-weight:bold;">0</span> MB
+      </div>
+    </div>
+  </div>
+
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff; min-height: 80px;">
+    GPU Status: Ready.
+  </div>
+
+  <script id="myScriptArea">
+    // Simple descriptive naming
+    let myIsRunning = false;
+    let myLeakArray = [];
+
+    async function myStartBad() {
+      myIsRunning = true;
+      document.getElementById('myDivHistory').innerHTML = "<b>Status:</b> Running BAD loop (Leaking)...";
+      myLoop();
+    }
+
+    async function myStopAndClean() {
+      myIsRunning = false;
+      document.getElementById('myDivHistory').innerHTML = "<b>Status:</b> Cleaning GPU...";
+      
+      // Manual cleanup of the "trapped" tensors
+      myLeakArray.forEach(myT => {
+         myT.dispose(); 
+      });
+      myLeakArray = [];
+      
+      myRefreshStats();
+      document.getElementById('myDivHistory').innerHTML += "<br>Done. Memory is safe.";
+    }
+
+    async function myLoop() {
+      if (!myIsRunning) return;
+
+      for(let i=0; i<50; i++) {
+        const myBadTensor = tf.randomNormal([100, 100]);
+        
+        // --- REPAIR CHALLENGE: UNCOMMENT THE LINES BELOW ---
+        // myBadTensor.dispose(); 
+        // return; 
+
+        // If not disposed, we must store them or they leak forever
+        myLeakArray.push(myBadTensor);
+      }
+
+      myRefreshStats();
+      requestAnimationFrame(myLoop);
+    }
+
+    function myRefreshStats() {
+      const myInfo = tf.memory(); 
+      document.getElementById('myTensorCount').innerHTML = myInfo.numTensors;
+      document.getElementById('myMemBytes').innerHTML = (myInfo.numBytes / 1024 / 1024).toFixed(2);
+    }
+  </script>
+</div>
+
+<hr>
+
+<b>Edit Source Code Below:</b><br>
+<textarea id="myTextarea1" wrap="off" rows="10" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;"></textarea>
+<br>
+<input type="button" value="UPDATE AND RUN" onclick="myUpdateCode()" style="margin-left:10px; padding:10px; background:gold; font-weight:bold;">
+<input type="button" value="LOAD SOURCE" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+
+<script>
+// Logic to refresh the view and execute edits
+window.onload = function() { myTextGrow('myTextarea1', 'myCodeSpace'); };
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
+   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
+   myArea.rows = 20;
+}
+
+function myUpdateCode() {
+    myIsRunning = false;
+    const myNewCode = document.getElementById('myTextarea1').value;
+    document.getElementById('myCodeSpace').innerHTML = myNewCode;
+    
+    // Re-run the script tag content
+    const myOldScript = document.getElementById('myCodeSpace').querySelector('script');
+    const myNewScript = document.createElement('script');
+    myNewScript.text = myOldScript.text;
+    document.head.appendChild(myNewScript).parentNode.removeChild(myNewScript);
+
+    document.getElementById('myDivHistory').innerHTML = "<b>Code Updated!</b> Try the Bad Loop again.";
+}
+
+// Global monitor refresh
+setInterval(() => {
+    if(typeof tf !== 'undefined') {
+       const myInfo = tf.memory();
+       const myC = document.getElementById('myTensorCount');
+       const myM = document.getElementById('myMemBytes');
+       if(myC && myM) {
+         myC.innerHTML = myInfo.numTensors;
+         myM.innerHTML = (myInfo.numBytes / 1024 / 1024).toFixed(2);
+       }
+    }
+}, 500);
+</script>
+
+</body>

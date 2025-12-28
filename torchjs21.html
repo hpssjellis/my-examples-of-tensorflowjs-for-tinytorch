@@ -1,0 +1,105 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body>
+
+<h2 align="center">torchjs21.html - The Probability Engine</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
+<b>Step 21 Logic:</b> Predictive Generation.<br>
+<b>The Experiment:</b> Edit the percentages in the blue box. If you make "Angry" 90%, the "Robot" will change its personality!
+</div><br>
+
+<div id="myCodeSpace">
+  <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
+    
+    <div style="flex: 1.2; min-width: 350px; border: 2px solid green; padding: 10px;">
+      <b>1. Start the Chain:</b><br>
+      <input type="text" id="myInputText" value="The robot is" style="width: 60%; font-size: 18px;">
+      <input type="button" value="GENERATE" onclick="myRunTransformer()">
+      
+      <div id="myOutputDisplay" style="font-size: 30px; margin-top: 20px; color: #2c3e50; font-family: 'Courier New', Courier, monospace;">
+        The robot is...
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
+      <b>2. AI "Next Word" Probabilities:</b><br>
+      <textarea id="myWeightsJSON" rows="10" style="width: 95%; font-family: monospace;" oninput="myDrawBrain()">
+{
+  "happy": 0.70,
+  "sad": 0.15,
+  "angry": 0.10,
+  "confused": 0.05
+}
+      </textarea>
+    </div>
+  </div>
+
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff;">
+    Click Generate to see the Softmax choice.
+  </div>
+
+  <script>
+    // Simple descriptive naming
+    async function myRunTransformer() {
+      const myText = document.getElementById('myInputText').value;
+      const myRaw = document.getElementById('myWeightsJSON').value;
+      const myDisplay = document.getElementById('myOutputDisplay');
+      const myHistory = document.getElementById('myDivHistory');
+      
+      try {
+        const myProbabilities = JSON.parse(myRaw);
+        const myWords = Object.keys(myProbabilities);
+        const myScores = Object.values(myProbabilities);
+
+        // Represent probabilities as a Tensor
+        const myTensor = tf.tensor1d(myScores);
+        
+        // Softmax Simulation: Pick a word based on weight
+        const myRandom = Math.random();
+        let myCumulative = 0;
+        let myChosenWord = "???";
+
+        for (let i = 0; i < myWords.length; i++) {
+          myCumulative += myScores[i];
+          if (myRandom < myCumulative) {
+            myChosenWord = myWords[i];
+            break;
+          }
+        }
+
+        // Visual Update
+        myDisplay.innerHTML = `${myText} <span style="color:red;">${myChosenWord}</span>`;
+        myHistory.innerHTML = `<b>AI Decision Logic:</b><br>
+          Random Seed: ${myRandom.toFixed(3)}<br>
+          Chosen Word: <b>${myChosenWord}</b> (Weight: ${(myProbabilities[myChosenWord]*100).toFixed(0)}%)<br>
+          Output Tensor: [${myTensor.dataSync()}]`;
+
+        myTensor.dispose();
+      } catch(e) {
+        myHistory.innerHTML = "<b style='color:red;'>JSON Error!</b>";
+      }
+    }
+
+    function myDrawBrain() {
+       // Just a placeholder to ensure the JSON is valid on edit
+       try { JSON.parse(document.getElementById('myWeightsJSON').value); }
+       catch(e) {}
+    }
+  </script>
+</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+Click to see how the Transformer makes probabilistic guesses...
+</textarea>
+
+<script>
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
+   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
+   myArea.rows = myArea.value.split('\n').length + 3;
+}
+</script>
+
+</body>
