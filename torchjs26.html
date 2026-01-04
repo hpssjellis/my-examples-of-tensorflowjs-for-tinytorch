@@ -1,0 +1,204 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body style="font-family: sans-serif; background-color: #fdfdfd;">
+
+<h2 align="center">torchjs26.html - Optimized Hybrid (No MNIST)</h2>
+
+<div style="font-size:15px; background-color:lightyellow; width:92%; border:2px solid blue; padding:15px; margin:auto; border-radius:10px;"> 
+<b>Teacher Note:</b> This model uses regular camera training. 
+1. Use the <b>Pruning</b> slider to cut weak connections. 
+2. Use the <b>Quantization</b> slider to round numbers. 
+3. Watch how these "Edge AI" tricks save memory before you Export to C++.
+</div><br>
+
+<div id="myCodeSpace"> 
+  <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
+    
+    <div style="flex: 1; min-width: 330px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <select id="myCameraSelect" style="width: 100%; margin-bottom: 5px;"></select>
+      <video id="myVideo1" width="320" height="240" autoplay playsinline style="border: 2px solid black; background: #000;"></video>
+      <br><br>
+      <input type="button" value="1. Start Camera & Brain" onclick="myStartAll()" style="width:100%; font-weight:bold; padding:10px; background:#e1f5fe; cursor:pointer;">
+      <hr>
+      <b>Training Buffers:</b><br>
+      <input type="button" value="Train 0" onclick="myCollect(0)">
+      <input type="button" value="Train 1" onclick="myCollect(1)">
+      <input type="button" value="Train 2" onclick="myCollect(2)">
+    </div>
+
+    <div style="flex: 1; min-width: 330px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
+      <b>2. Edge AI Optimization</b><hr>
+      
+      <b>Pruning Threshold:</b><br>
+      <input type="range" id="myPruneSlider" min="0" max="95" value="10" style="width:80%" oninput="myUpdateOptimization()">
+      <span id="myPruneVal">10</span>% Cut
+      <br><br>
+      
+      <b>Quantization (Bits):</b><br>
+      <input type="range" id="myQuantSlider" min="1" max="32" value="32" style="width:80%" oninput="myUpdateOptimization()">
+      <span id="myBitsVal">32</span>-bit
+      <hr>
+      
+      <div id="myOptReport" style="font-family: monospace; font-size: 0.9em;">
+        Est. File Size: <b id="mySizeText" style="color:red;">Calculating...</b><br>
+        Device Health: <b id="myHealthText">Healthy</b>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 330px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <b>3. Prediction & Export</b><hr>
+      <div id="myDiv1" style="border: 1px solid green; padding: 10px; margin-top: 5px; font-family: monospace; background: #e8f5e9; min-height: 50px;">Ready...</div>
+      
+      <br>
+      <b>Export Name:</b> <input type="text" id="myExportName" value="myModel26" size="10">.h 
+      <input type="button" value="EXPORT C++" style="background-color:#ffcccc; width:100%; margin-top:10px; padding:5px;" onclick="myExportCHeader()">
+      
+      <hr>
+      <div id="myDivHistory" style="border: 1px solid blue; padding: 5px; height: 80px; overflow-y: scroll; font-family: monospace; font-size: 0.8em; background: #f1f8ff;">Logs...</div>
+    </div>
+  </div>
+
+  <script>
+    var myModel, myTimer;
+    var myTrainData = {0:[], 1:[], 2:[]};
+
+    async function myStartAll() {
+      const myVideo = document.getElementById('myVideo1');
+      const myDeviceId = document.getElementById('myCameraSelect').value;
+      
+      if (!myVideo.srcObject) {
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+        });
+      }
+
+      if (!myModel) {
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({name: 'myConv1', inputShape:[64,64,3], kernelSize:5, filters:4, activation:'relu', padding:'same'}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dense({name: 'myOutput', units:3, activation:'softmax'}));
+        myModel.compile({optimizer: tf.train.adam(0.001), loss:'categoricalCrossentropy'});
+      }
+
+      if (myTimer) clearInterval(myTimer);
+      myTimer = setInterval(async () => {
+        const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
+
+        // Continuous Training if buffers are full
+        if (myTrainData[0].length > 0 && myTrainData[1].length > 0 && myTrainData[2].length > 0) {
+          const myBatch = tf.concat([
+            myTrainData[0][Math.floor(Math.random()*20) % myTrainData[0].length],
+            myTrainData[1][Math.floor(Math.random()*20) % myTrainData[1].length],
+            myTrainData[2][Math.floor(Math.random()*20) % myTrainData[2].length]
+          ]);
+          await myModel.trainOnBatch(myBatch, tf.tensor2d([[1,0,0],[0,1,0],[0,0,1]]));
+          myBatch.dispose();
+        }
+
+        const myPred = myModel.predict(myInput);
+        const myID = (await myPred.argMax(1).data())[0];
+        document.getElementById('myDiv1').innerHTML = `DETECTED: <b>Class ${myID}</b><br>Buffers: ${myTrainData[0].length}, ${myTrainData[1].length}, ${myTrainData[2].length}`;
+        
+        myInput.dispose(); myPred.dispose();
+      }, 200);
+      
+      myUpdateOptimization();
+    }
+
+    function myUpdateOptimization() {
+      const myPrune = document.getElementById('myPruneSlider').value;
+      const myBits = document.getElementById('myQuantSlider').value;
+      document.getElementById('myPruneVal').innerHTML = myPrune;
+      document.getElementById('myBitsVal').innerHTML = myBits;
+
+      // Simulated Math for Students: (Parameters * Bits / 8) * (1 - Prune%)
+      let myTotalParams = 12000; 
+      let myBytes = (myTotalParams * (myBits / 8)) * (1 - (myPrune / 100));
+      document.getElementById('mySizeText').innerHTML = (myBytes / 1024).toFixed(1) + " KB";
+      
+      let myHealth = "Healthy";
+      if (myPrune > 60 || myBits < 8) myHealth = "Dizzy";
+      if (myPrune > 85 || myBits < 4) myHealth = "Brain Dead";
+      document.getElementById('myHealthText').innerHTML = myHealth;
+    }
+
+    async function myExportCHeader() {
+      let myFileName = document.getElementById('myExportName').value + ".h";
+      let myText = `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+      
+      const myPruneThreshold = document.getElementById('myPruneSlider').value / 100;
+      const myLayers = ['myConv1', 'myOutput'];
+
+      for (let n of myLayers) {
+        const myL = myModel.getLayer(n);
+        let myW = await myL.getWeights()[0].data();
+        let myB = await myL.getWeights()[1].data();
+        
+        // Apply Pruning: If value is too small, make it zero
+        let myPrunedW = Array.from(myW).map(v => Math.abs(v) < myPruneThreshold ? 0 : v);
+        
+        myText += `const float ${n}_w[] = {${myPrunedW.map(v=>v.toFixed(4)+'f').join(',')}};\n`;
+        myText += `const float ${n}_b[] = {${Array.from(myB).map(v=>v.toFixed(4)+'f').join(',')}};\n\n`;
+      }
+      myText += "#endif";
+      const myLink = document.createElement('a');
+      myLink.href = URL.createObjectURL(new Blob([myText]));
+      myLink.download = myFileName;
+      myLink.click();
+    }
+
+    function myCollect(myID) {
+      const myVideo = document.getElementById('myVideo1');
+      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
+      myTrainData[myID].push(myFrame);
+      if (myTrainData[myID].length > 20) myTrainData[myID].shift();
+      document.getElementById('myDivHistory').innerHTML = `Added to Class ${myID}<br>` + document.getElementById('myDivHistory').innerHTML;
+    }
+
+    (async function myInitCameras() {
+      const myDevices = await navigator.mediaDevices.enumerateDevices();
+      const mySelect = document.getElementById('myCameraSelect');
+      myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+        const myOpt = document.createElement('option');
+        myOpt.value = d.deviceId;
+        myOpt.text = d.label || `Camera ${i + 1}`;
+        mySelect.appendChild(myOpt);
+      });
+    })();
+  </script>
+</div>
+
+<input id="myUpdateBtn" type="button" value="Update & Run" style="visibility:hidden; background-color: yellow; font-weight:bold; padding:10px; border-radius:5px;" onclick="myApplyAndRun()">
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px; padding:10px; border-radius:10px;" onclick="myToggleEditor()">
+Click here to see the Hybrid Optimization source code...
+</textarea>
+
+<script>
+let myOnce = true;
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); myLines.shift(); myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  
+  // Re-initialize cameras and logic
+  myStartAll();
+  document.getElementById('myDivHistory').innerHTML = "System Re-Synced.";
+}
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.rows = 20;
+}
+</script>
+
+</body>
