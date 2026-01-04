@@ -1,0 +1,14 @@
+#include "tflite_init.h" // LiteRT bridge for ESP32
+#include "esp_nn.h"      // Hardware acceleration
+
+// The New System uses "Memory Mapping"
+// Instead of copying weights into RAM, LiteRT reads them 
+// directly from the Flash chip to save memory!
+void myRunInference() {
+    // LiteRT automatically detects the ESP32-S3 
+    // and uses the Vector Instructions for Conv2D layers.
+    
+    // We call the same Invoke() as before, but under the hood,
+    // the S3 is using specialized math instructions.
+    myInterpreter->Invoke();
+}

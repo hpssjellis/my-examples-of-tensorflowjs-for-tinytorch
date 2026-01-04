@@ -1,0 +1,74 @@
+#include <Arduino.h>
+#include <Nicla_System.h>
+#include "camera.h"        // Built-in Nicla camera driver
+#include "myWeights.h"     // Your exported header file
+#include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_interpreter.h"
+#include "tensorflow/lite/schema/schema_generated.h"
+
+// 1. Settings
+const int myInWidth = 64;
+const int myInHeight = 64;
+constexpr int myArenaSize = 60 * 1024; // Allocate 60KB for the "Brain Workspace"
+uint8_t myTensorArena[myArenaSize];
+
+// 2. TFLite Globals
+const tflite::Model* myModelPtr = nullptr;
+tflite::MicroInterpreter* myInterpreter = nullptr;
+TfLiteTensor* myInput = nullptr;
+
+void setup() {
+  Serial.begin(115200);
+  nicla::begin();
+  nicla::leds.begin();
+  
+  // Initialize Camera
+  if (camera.begin(FRAME_SIZE_QQVGA, CAMERA_RGB565, 30) != 0) {
+    Serial.println("Camera Error!");
+  }
+
+  // Load the model from your header file
+  myModelPtr = tflite::GetModel(myWeights_raw); // 'myWeights_raw' is the array name in your .h
+  
+  static tflite::AllOpsResolver myResolver;
+  static tflite::MicroInterpreter staticInterpreter(
+      myModelPtr, myResolver, myTensorArena, myArenaSize);
+  
+  myInterpreter = &staticInterpreter;
+  myInterpreter->AllocateTensors();
+  myInput = myInterpreter->input(0);
+}
+
+void loop() {
+  // 3. Capture Frame
+  if (camera.capture() == 0) {
+    uint8_t* myFrame = camera.getBuffer();
+    
+    // 4. Pre-process (Convert RGB565 to Normalized Float)
+    // Note: This is simplified. Real code requires resizing to 64x64.
+    for (int i = 0; i < (myInWidth * myInHeight); i++) {
+       // Just taking the Red channel for simplicity in this example
+       myInput->data.f[i] = (float)myFrame[i*2] / 255.0f; 
+    }
+
+    // 5. Run Inference
+    if (myInterpreter->Invoke() == kTfLiteOk) {
+      TfLiteTensor* myOutput = myInterpreter->output(0);
+      
+      float myClass0 = myOutput->data.f[0];
+      float myClass1 = myOutput->data.f[1];
+      float myClass2 = myOutput->data.f[2];
+
+      Serial.print("Predictions: ");
+      Serial.print(myClass0); Serial.print(" | ");
+      Serial.print(myClass1); Serial.print(" | ");
+      Serial.println(myClass2);
+      
+      // Visual feedback on the Nicla RGB LED
+      if(myClass0 > 0.8) nicla::leds.setColor(RED);
+      else if(myClass1 > 0.8) nicla::leds.setColor(GREEN);
+      else if(myClass2 > 0.8) nicla::leds.setColor(BLUE);
+      else nicla::leds.setColor(OFF);
+    }
+  }
+}

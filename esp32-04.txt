@@ -1,0 +1,43 @@
+#include "esp_camera.h"
+#include "myWeights.h"
+#include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_interpreter.h"
+
+// The S3 has lots of internal RAM, but vision models are hungry
+#define MY_ARENA_SIZE 90 * 1024
+uint8_t myTensorArena[MY_ARENA_SIZE];
+
+tflite::MicroInterpreter* myInterpreter = nullptr;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Camera setup for ESP32-S3 Eye or Sense
+  camera_config_t myConfig;
+  // (Standard pins for S3-Sense here...)
+  esp_camera_init(&myConfig);
+
+  static tflite::AllOpsResolver myResolver;
+  const tflite::Model* myModel = tflite::GetModel(myWeights_w);
+  
+  static tflite::MicroInterpreter staticInterpreter(
+      myModel, myResolver, myTensorArena, MY_ARENA_SIZE);
+  
+  myInterpreter = &staticInterpreter;
+  myInterpreter->AllocateTensors();
+}
+
+void loop() {
+  camera_fb_t * myFrame = esp_camera_fb_get();
+  
+  // Logic: Map the 8-bit pixels to the 0.0-1.0 float input
+  TfLiteTensor* myInput = myInterpreter->input(0);
+  for (int i = 0; i < (64 * 64); i++) {
+    myInput->data.f[i] = (float)myFrame->buf[i] / 255.0f;
+  }
+  
+  myInterpreter->Invoke();
+  Serial.printf("Result: %f\n", myInterpreter->output(0)->data.f[0]);
+  
+  esp_camera_fb_return(myFrame);
+}

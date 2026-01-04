@@ -1,0 +1,58 @@
+#include <Arduino.h>
+#include <Nicla_System.h>
+#include "camera.h"
+#include "myWeights.h" // Your generated header
+
+// LiteRT / TFLM Headers
+#include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "tensorflow/lite/micro/micro_interpreter.h"
+#include "tensorflow/lite/schema/schema_generated.h"
+
+// 1. Memory "Arena" - The brain's scratchpad
+const int myArenaSize = 80 * 1024; 
+alignas(16) uint8_t myTensorArena[myArenaSize]; 
+
+// 2. The Interpreter (The Engine)
+tflite::MicroInterpreter* myInterpreter = nullptr;
+TfLiteTensor* myInput = nullptr;
+
+void setup() {
+  Serial.begin(115200);
+  nicla::begin();
+  camera.begin(FRAME_SIZE_QQVGA, CAMERA_RGB565, 30);
+
+  // Load the model from the .h file
+  const tflite::Model* myModel = tflite::GetModel(myWeights_w); 
+
+  // 3. LiteRT Op Resolver: ONLY load the math we used in torchjs
+  static tflite::MicroMutableOpResolver<3> myResolver;
+  myResolver.AddConv2D();
+  myResolver.AddFlatten();
+  myResolver.AddSoftmax();
+
+  // Initialize Interpreter
+  static tflite::MicroInterpreter staticInterpreter(
+      myModel, myResolver, myTensorArena, myArenaSize);
+  
+  myInterpreter = &staticInterpreter;
+  myInterpreter->AllocateTensors();
+  myInput = myInterpreter->input(0);
+}
+
+void loop() {
+  if (camera.capture() == 0) {
+    uint8_t* myBuffer = camera.getBuffer();
+    
+    // 4. Student Logic: Convert pixels to 0.0 - 1.0 range
+    // We assume the camera feed is resized/cropped to 64x64 elsewhere
+    for (int i = 0; i < (64 * 64); i++) {
+        myInput->data.f[i] = (float)myBuffer[i] / 255.0f;
+    }
+
+    // 5. Run the Brain!
+    myInterpreter->Invoke();
+
+    TfLiteTensor* myOutput = myInterpreter->output(0);
+    Serial.print("Class 0: "); Serial.println(myOutput->data.f[0]);
+  }
+}

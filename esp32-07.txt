@@ -1,0 +1,74 @@
+#include "esp_camera.h"
+#include <Adafruit_SSD1327.h>
+#include <EloquentTinyML.h>  // Eloquent wrapper for LiteRT/TFLite
+#include "myModel.h"         // Your exported weights
+
+// AI Constants (Match your JS Model)
+#define MY_INPUTS 9216       // 96x96 pixels
+#define MY_OUTPUTS 10        // E.g., digits 0-9
+#define MY_ARENA_SIZE 32*1024 // 32KB for intermediate tensors
+
+// Camera/OLED Pins (Kept from your working code)
+#define XCLK_GPIO_NUM 10
+// ... [Remaining pin defines from your original code] ...
+
+Adafruit_SSD1327 display(128, 128, &SPI, D6, -1, D7);
+Eloquent::TinyML::TfLite<MY_INPUTS, MY_OUTPUTS, MY_ARENA_SIZE> myBrain(myModel_tflite); //
+
+float myInputBuffer[MY_INPUTS];
+
+void setup() {
+  Serial.begin(115200);
+  if (!display.begin(0x3D)) while(1);
+  
+  // Camera Config (Kept from your working code)
+  camera_config_t config;
+  // ... [Your existing config setup] ...
+  config.frame_size = FRAMESIZE_96X96;
+  config.pixel_format = PIXFORMAT_GRAYSCALE; // Direct 1-byte per pixel
+  esp_camera_init(&config);
+}
+
+void loop() {
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) return;
+
+  display.clearDisplay();
+
+  // 1. Process Image for OLED and AI
+  for (int i = 0; i < MY_INPUTS; i++) {
+    uint8_t myGray = fb->buf[i];
+    
+    // Normalize for AI (0.0 to 1.0)
+    myInputBuffer[i] = myGray / 255.0;
+
+    // Draw to OLED (Kept your existing mapping logic)
+    int x = i % 96;
+    int y = i / 96;
+    int xMap = map(x, 0, 96, 0, 127);
+    int yMap = map(y, 0, 96, 0, 127);
+    display.drawPixel(xMap, yMap, map(myGray, 0, 255, 0, 15));
+  }
+
+  // 2. Run AI Inference
+  float myPredictions[MY_OUTPUTS];
+  myBrain.predict(myInputBuffer, myPredictions);
+
+  // 3. Find Best Match
+  int myBestDigit = 0;
+  float myHighestScore = 0;
+  for (int i = 0; i < MY_OUTPUTS; i++) {
+    if (myPredictions[i] > myHighestScore) {
+      myHighestScore = myPredictions[i];
+      myBestDigit = i;
+    }
+  }
+
+  // 4. Update Display
+  display.setCursor(3, 3);
+  display.print("Detected: ");
+  display.println(myBestDigit);
+  display.display();
+
+  esp_camera_fb_return(fb);
+}

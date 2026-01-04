@@ -1,0 +1,45 @@
+#include "camera.h"      // Standard Nicla Vision Camera
+#include "RocksettaTinyML.h" 
+#include "myWeights.h"   // Your exported .h file from torchjs
+
+// 1. Model Setup
+// Match these to your torchjs model (e.g., 64x64 grayscale = 4096)
+#define MY_INPUTS 4096 
+#define MY_OUTPUTS 3
+#define MY_ARENA_SIZE 80 * 1024
+
+// Initialize your library's "Brain"
+RocksettaTinyML myBrain;
+
+void setup() {
+    Serial.begin(115200);
+    
+    // 2. Standard Nicla Camera Init
+    if (!Camera.begin(FRAMESIZE_QQVGA, PIXFORMAT_GRAYSCALE, 30)) {
+        Serial.println("Camera Init Failed!");
+        return;
+    }
+
+    // 3. Load the LiteRT model using your library
+    // This handles the internal memory allocation for you
+    myBrain.begin(myWeights_w, MY_INPUTS, MY_OUTPUTS, MY_ARENA_SIZE);
+    Serial.println("Nicla Vision Ready!");
+}
+
+void loop() {
+    // 4. Capture Frame
+    if (Camera.grab() == 0) {
+        // 5. Pre-process: Scale 0-255 bytes to 0.0-1.0 floats
+        float myInput[MY_INPUTS];
+        uint8_t* myBuffer = Camera.getBuffer();
+        
+        for (int i = 0; i < MY_INPUTS; i++) {
+            myInput[i] = (float)myBuffer[i] / 255.0f;
+        }
+
+        // 6. Predict using RocksettaTinyML
+        int myResult = myBrain.predictClass(myInput);
+        Serial.printf("Predicted Class: %d\n", myResult);
+    }
+    delay(100);
+}
