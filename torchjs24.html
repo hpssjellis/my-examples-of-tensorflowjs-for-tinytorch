@@ -2,20 +2,19 @@
 
 <body>
 
-<h2 align="center">torchjs24.html - Performance Benchmarker</h2>
+<h2 align="center">torchjs24.html - Stable Performance Benchmarker</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
 <b>Step 24 Logic:</b> Profiling & Benchmarking.<br>
-<b>Fixed:</b> Added <code>readyState</code> check to prevent <i>IndexSizeError</i> on startup.<br>
-<b>Instructions:</b> Start the camera. Adjust complexity to see how many "Layers" your device can handle!
+<b>Update and Run:</b> This button now correctly refreshes the logic and re-triggers the benchmark loop automatically.
 </div><br>
 
 <div id="myCodeSpace">
   <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
     
     <div style="flex: 1; min-width: 300px; border: 2px solid green; padding: 10px; text-align: center;">
-      <video id="myVideo1" width="320" height="240" autoplay playsinline style="border:1px solid black;"></video><br>
-      <input type="button" value="Start Benchmark" onclick="myStartBenchmark()" style="font-size:18px; padding:10px;">
+      <video id="myVideo1" width="320" height="240" autoplay playsinline style="border:1px solid black; background: #333;"></video><br><br>
+      <input type="button" value="1. Start Benchmark" onclick="myStartBenchmark()" style="font-size:18px; padding:10px;">
     </div>
 
     <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
@@ -36,13 +35,16 @@
   </div>
 
   <script>
-    // Descriptive names and simple JS
     let myIsRunning = false;
 
     async function myStartBenchmark() {
+      const myVideo = document.getElementById('myVideo1');
       try {
-        const myStream = await navigator.mediaDevices.getUserMedia({video: true});
-        document.getElementById('myVideo1').srcObject = myStream;
+        // Only request stream if not already active
+        if (!myVideo.srcObject) {
+          const myStream = await navigator.mediaDevices.getUserMedia({video: true});
+          myVideo.srcObject = myStream;
+        }
         myIsRunning = true;
         myLoop();
       } catch(e) {
@@ -52,41 +54,35 @@
 
     async function myLoop() {
       if (!myIsRunning) return;
-      
       const myVideo = document.getElementById('myVideo1');
 
-      // CRITICAL FIX: Only run if the video is ready and has dimensions
-      if (myVideo.readyState < 2 || myVideo.videoWidth === 0) {
-        requestAnimationFrame(myLoop);
-        return; 
+      // CRITICAL FIX: Only run if the video is ready
+      if (myVideo.readyState === 4) {
+        const myStart = performance.now();
+        const myComplexity = document.getElementById('myComplexity').value;
+
+        // 1. Process Frame
+        const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
+
+        // 2. Simulate Layer Complexity
+        let myLogic = myFrame;
+        for(let i=0; i < myComplexity; i++) {
+          myLogic = tf.add(myLogic, 0.0001); 
+        }
+
+        // 3. Force synchronization
+        await myLogic.data(); 
+
+        const myEnd = performance.now();
+        const myDiff = (myEnd - myStart);
+        
+        document.getElementById('myLatency').innerHTML = myDiff.toFixed(1);
+        document.getElementById('myFPS').innerHTML = (1000 / myDiff).toFixed(1);
+
+        // Memory Management
+        myFrame.dispose();
+        myLogic.dispose();
       }
-
-      const myStart = performance.now();
-      const myComplexity = document.getElementById('myComplexity').value;
-
-      // 1. Process Frame
-      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
-
-      // 2. Simulate Layer Complexity
-      // We perform math operations repeatedly to simulate a deeper model
-      let myLogic = myFrame;
-      for(let i=0; i < myComplexity; i++) {
-        myLogic = tf.add(myLogic, 0.0001); 
-      }
-
-      // 3. Force synchronization to get accurate timing
-      await myLogic.data(); 
-
-      const myEnd = performance.now();
-      const myDiff = (myEnd - myStart);
-      
-      document.getElementById('myLatency').innerHTML = myDiff.toFixed(1);
-      document.getElementById('myFPS').innerHTML = (1000 / myDiff).toFixed(1);
-
-      // Memory Management
-      myFrame.dispose();
-      myLogic.dispose();
-
       requestAnimationFrame(myLoop);
     }
 
@@ -96,17 +92,44 @@
   </script>
 </div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
-Click to see the performance math and IndexSizeError fix...
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow; margin-left: 10px;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myToggleEditor()">
+Click here to see the performance math...
 </textarea>
 
 <script>
-// Captures everything in myCodeSpace including history and scripts
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myArea = document.getElementById('myTextarea1');
+  let myLines = myArea.value.split('\n');
+  
+  // Strip the wrapper markers
+  myLines.shift(); // remove script tag
+  myLines.shift(); // remove spacer
+  myLines.pop();   // remove div history
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  
+  // FIX: Re-trigger the benchmark immediately after updating the code
+  myStartBenchmark(); 
+}
+
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
    const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
    myArea.value = myPrefix + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value += "\n<div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
 </script>
 

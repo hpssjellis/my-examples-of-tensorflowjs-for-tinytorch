@@ -2,79 +2,102 @@
 
 <body>
 
-<h2 align="center">As easy as I can make torchjs07.html (WebCam to Tensor)</h2>
+<h2 align="center">torchjs07.html - WebCam to Tensor (Stable)</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-This matches our <b>torch07.py</b> logic. It grabs live pixels from your camera and converts them into a <b>Tensor</b>.<br><br>
-1. Choose your camera from the dropdown.<br>
-2. Click "Start Camera" to see the live feed.<br>
-3. The computer will continuously calculate the <b>Average Brightness</b> of the frame, just like our Python script.
+This matches our <b>torch07.py</b> logic. It converts live pixels into a <b>Tensor</b>.<br>
+Changing the code in the black box and clicking <b>Update</b> will restart the brain instantly.
 </div><br>
 
 <div id="myCodeSpace"> 
   <select id="myCameraSelect"></select>
-  <input id="myButton1" type="button" value="Start Camera" onclick="{
-    (async function myGo() {
+  <input id="myButton1" type="button" value="Start Camera" onclick="myStartCamera()">
+  <br><br>
+
+  <video id="myVideo1" width="320" height="240" autoplay playsinline 
+    style="border: 5px solid black; background-color: #ddd;"></video>
+
+  <script>
+    var myTimer = null;
+
+    async function myStartCamera() {
       const myVideo = document.getElementById('myVideo1');
       const myDisplay = document.getElementById('myDiv1');
       const myDeviceId = document.getElementById('myCameraSelect').value;
       
-      // 1. Initialize Camera - Matches cv2.VideoCapture(0)
-      const myStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
-      });
-      myVideo.srcObject = myStream;
+      // 1. Initialize Camera (matches cv2.VideoCapture)
+      if (!myVideo.srcObject) {
+        const myStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+        });
+        myVideo.srcObject = myStream;
+      }
 
-      // 2. Continuous Processing Loop - Matches while True loop
-      setInterval(async () => {
-        // Convert Video Frame to Tensor (100x100)
+      // 2. Clear old loops before starting new ones
+      if (myTimer) clearInterval(myTimer);
+
+      myTimer = setInterval(async () => {
+        // Convert Video Frame to Tensor
         const myTensor = tf.browser.fromPixels(myVideo)
           .resizeBilinear([100, 100])
-          .div(255.0); // Normalize pixels 0.0 to 1.0
+          .div(255.0); 
 
-        // 3. Proof of Grabbing Pixels: Average Brightness
-        const myBrightness = myTensor.mean().dataSync()[0];
+        // 3. Proof: Average Brightness
+        const myData = await myTensor.mean().data();
+        const myBrightness = myData[0];
         
         myDisplay.innerHTML = `<b>Current Avg Brightness:</b> ${myBrightness.toFixed(4)}<br>`;
         myDisplay.innerHTML += `<b>Tensor Shape:</b> [${myTensor.shape}]`;
 
-        // Clean up memory
         myTensor.dispose();
-      }, 100); // Run every 100ms
-    })();
-  }"><br><br>
-
-  <video id="myVideo1" width="320" height="240" autoplay playsinline 
-    style="border: 5px solid black; background-color: #ddd;"></video>
+      }, 100); 
+    }
+  </script>
 </div>
 
-<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace;">...</div>
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
 
-<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="{
-  let myLines = document.getElementById('myTextarea1').value.split('\n');
-  myLines.shift(); 
-  myLines.shift(); 
-  myLines.pop();   
-  
-  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
-}"><br>
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="myApplyAndRun()"><br>
 
 <textarea id="myTextarea1" wrap="off" 
   style="font-size:15px; color:white; background-color:black; width:95%; font-family: 'Courier New', monospace;" rows="2" 
-  onclick="{
-    if (myOnce) {
-       myTextGrow('myTextarea1', 'myCodeSpace');
-       document.getElementById('myUpdateBtn').style.visibility = 'visible';
-       myOnce = false;
-    }
-}">
-Click here to see the working HTML/JS code.
+  onclick="myToggleEditor()">
+Click here to see the working HTML code.
 </textarea>
 
 <script>
 let myOnce = true;
 
-// Helper to list all cameras for the select box
+function myApplyAndRun() {
+  const myArea = document.getElementById('myTextarea1');
+  let myLines = myArea.value.split('\n');
+  
+  // Remove the wrapper script and div tags
+  myLines.shift(); 
+  myLines.shift(); 
+  myLines.pop();   
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  
+  // Auto-trigger logic
+  myStartCamera(); 
+}
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
+}
+
 (async function myListCameras() {
   const myDevices = await navigator.mediaDevices.enumerateDevices();
   const mySelect = document.getElementById('myCameraSelect');
@@ -85,16 +108,6 @@ let myOnce = true;
     mySelect.appendChild(myOpt);
   });
 })();
-
-function myTextGrow(myT, myC) {
-   const myArea = document.getElementById(myT);
-   myArea.value = '\x3Cscript src=\'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0\'> \x3C/script> \n\n' + document.getElementById(myC).innerHTML;
-   myArea.value += '\n<div id=\'myDiv1\'>...</div>';
-   
-   setTimeout(() => {
-      myArea.rows = myArea.value.split('\n').length + 3;
-   }, 100);
-}
 </script>
 
 </body>

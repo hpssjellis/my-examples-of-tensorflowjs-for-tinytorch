@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs18.html - Live Text Tokenizer</h2>
+<h2 align="center">torchjs18.html - Stable Text Tokenizer</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-<b>Step 18 Logic:</b> Words to Numbers (Tokenization).<br>
-<b>Live Edit:</b> Use the boxes below to change the Vocab or click the code box at the bottom to see the full source!
+<b>NLP Logic:</b> Words &rarr; IDs &rarr; Tensors. 
+Edit the <b>myVocab</b> list in the black box below and click <b>Update and Run</b> to see how the AI's understanding of your sentence changes!
 </div><br>
 
 <div id="myCodeSpace">
@@ -15,55 +15,46 @@
       <b>1. Type Your Sentence:</b><br>
       <textarea id="myInputText" rows="3" style="width: 95%; font-size: 18px;" oninput="myTokenize()"></textarea>
       <br><br>
-      <b>2. AI Output (The Tensor):</b><br>
+      <b>2. AI Output (The 1D Tensor):</b><br>
       <div id="myTensorView" style="font-family: monospace; background: black; color: lime; padding: 10px; min-height: 40px; font-size: 20px;">[ ]</div>
     </div>
 
     <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
-      <b>3. Edit Vocabulary (JSON):</b><br>
-      <textarea id="myVocabList" rows="8" style="width: 95%; font-family: monospace;" oninput="myTokenize()">
-{
-  "the": 1,
-  "cat": 2,
-  "sat": 3,
-  "on": 4,
-  "mat": 5,
-  "robot": 6,
-  "is": 7,
-  "happy": 8
-}
-      </textarea>
+      <b>3. Current Vocabulary:</b><br>
+      <div id="myVocabView" style="font-family: monospace; height: 150px; overflow-y: scroll; background: #f0f0f0; padding: 5px; font-size: 14px;"></div>
     </div>
   </div>
 
   <script>
-    // Uses simple async/await and descriptive names
-    async function myTokenize() {
-      const myText = document.getElementById('myInputText').value.toLowerCase();
-      const myVocabRaw = document.getElementById('myVocabList').value;
+    // Variables persist outside the update loop
+    var myVocab = {
+      "the": 1, "cat": 2, "sat": 3, "on": 4, "mat": 5,
+      "dog": 6, "ran": 7, "to": 8, "store": 9, "ai": 10,
+      "is": 11, "fun": 12, "coding": 13, "cool": 14
+    };
+
+    function myTokenize() {
+      const myInput = document.getElementById('myInputText').value;
       const myHistory = document.getElementById('myDivHistory');
+      const myVocabDisplay = document.getElementById('myVocabView');
       
-      let myVocab = {};
-      try {
-        myVocab = JSON.parse(myVocabRaw);
-      } catch(e) {
-        document.getElementById('myTensorView').innerHTML = "JSON Format Error...";
-        return;
-      }
+      // Update Vocab View
+      myVocabDisplay.innerHTML = JSON.stringify(myVocab, null, 2).replace(/[\{\}\"]/g, "");
 
-      // Split words and remove empty spaces
-      const myWords = myText.split(/\s+/).filter(w => w.length > 0);
-      
-      // Tokenization: Map words to IDs from our dictionary
-      const myIDs = myWords.map(w => myVocab[w] || 0);
+      // 1. Clean and Split Text
+      let myWords = myInput.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(x => x.length > 0);
 
+      // 2. Convert to IDs (0 for unknown)
+      let myIDs = myWords.map(w => myVocab[w] || 0);
+
+      // 3. Update Display
       if (myIDs.length > 0) {
-        // Show the 1D Tensor result
         document.getElementById('myTensorView').innerHTML = "[" + myIDs.join(", ") + "]";
         
         let myReport = `<b>Conversion Details:</b><br>`;
         myWords.forEach((w, i) => {
-          myReport += `Word: "<b>${w}</b>" &rarr; ID: ${myIDs[i]} ${myIDs[i] === 0 ? '(Unknown)' : ''}<br>`;
+          let myColor = myIDs[i] === 0 ? "red" : "green";
+          myReport += `Word: "<b>${w}</b>" &rarr; ID: <span style="color:${myColor}">${myIDs[i]}</span><br>`;
         });
         myHistory.innerHTML = myReport;
       } else {
@@ -71,26 +62,47 @@
         myHistory.innerHTML = "Waiting for input...";
       }
     }
-    
-    // Auto-run once on load
-    window.onload = myTokenize;
   </script>
 </div>
 
 <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #fff4e6; min-height: 80px;">...</div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
-Click here to see the internal AI code...
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myToggleEditor()">
+Click here to see the internal Tokenizer code...
 </textarea>
 
 <script>
-// Logic to expand and show the internal HTML
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); // remove script tag
+  myLines.shift(); // remove spacer
+  myLines.pop();   // remove div
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myTokenize(); // Run once immediately to refresh
+}
+
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
-   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
-   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
+
+// Initial run
+window.onload = myTokenize;
 </script>
 
 </body>

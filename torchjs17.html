@@ -2,17 +2,17 @@
 
 <body>
 
-<h2 align="center">torchjs17.html - Smart Digit Scanner</h2>
+<h2 align="center">torchjs17.html - Stable Digit Scanner</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-<b>Logic:</b> Thresholding + MNIST.<br>
-<b>Log Feature:</b> Automatically records a new entry whenever a different digit is detected!
+<b>Stable Scanner:</b> This version uses a threshold canvas to help the AI "see" digits. 
+The <b>Update and Run</b> button allows you to live-edit the threshold logic while keeping the camera active.
 </div><br>
 
 <div id="myCodeSpace"> 
   <select id="myCameraSelect"></select>
   <input type="button" value="1. Start Camera" onclick="myStartAll()">
-  <input type="button" id="myLoadBtn" value="2. Load MNIST from Internet" onclick="myFetchMnist()">
+  <input type="button" id="myLoadBtn" value="2. Load Brain" onclick="myFetchMnist()">
   <span id="myDataStatus" style="color:red">Brain: Empty</span> | 
   
   <b>Export:</b> <input type="text" id="myExportName" value="myWeights" size="8">.h 
@@ -21,117 +21,146 @@
   <div style="display: flex; gap: 10px; flex-wrap: wrap;">
     <div style="position: relative;">
       <video id="myVideo1" width="320" height="240" autoplay playsinline style="border: 5px solid black; background: #ddd;"></video>
-      <div style="position: absolute; top: 60px; left: 100px; width: 120px; height: 120px; border: 3px solid #00ff00; pointer-events: none;"></div>
+      <div style="position: absolute; top: 60px; left: 100px; width: 120px; height: 120px; border: 2px solid red; pointer-events: none;"></div>
     </div>
-    
-    <div>
-      <b>AI Binary View (28x28):</b><br>
-      <canvas id="myCanvasBinary" width="120" height="120" style="border: 5px solid red; background: black; image-rendering: pixelated;"></canvas>
-    </div>
+    <canvas id="myCanvasThreshold" width="120" height="120" style="border: 5px solid blue; background: white; image-rendering: pixelated;"></canvas>
   </div>
 
   <script>
-    var myModel;
-    var myLastLoggedDigit = -1; // Keeps track of the last digit we put in the log
+    var myModel, myTimer = null;
+    var myLastDigit = -1;
 
     async function myStartAll() {
       const myVideo = document.getElementById('myVideo1');
-      const myDeviceId = document.getElementById('myCameraSelect').value;
-      const myStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
-      });
-      myVideo.srcObject = myStream;
-
-      // Brain matching torch16/17
-      myModel = tf.sequential();
-      myModel.add(tf.layers.conv2d({name: 'myConv1', inputShape: [28, 28, 1], kernelSize: 3, filters: 16, activation: 'relu', padding: 'same'}));
-      myModel.add(tf.layers.maxPooling2d({poolSize: 2, strides: 2}));
-      myModel.add(tf.layers.conv2d({name: 'myConv2', kernelSize: 3, filters: 32, activation: 'relu', padding: 'same'}));
-      myModel.add(tf.layers.maxPooling2d({poolSize: 2, strides: 2}));
-      myModel.add(tf.layers.flatten());
-      myModel.add(tf.layers.dense({name: 'myDense1', units: 64, activation: 'relu'}));
-      myModel.add(tf.layers.dense({name: 'myOutput', units: 10, activation: 'softmax'}));
+      const myDisplay = document.getElementById('myDiv1');
+      const myHistory = document.getElementById('myDivHistory');
+      const myCanvas = document.getElementById('myCanvasThreshold');
+      const myCtx = myCanvas.getContext('2d', {willReadFrequently: true});
       
-      myModel.compile({optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy'});
-
-      setInterval(async () => {
-        if (!myModel) return;
-        const myCanvasBin = document.getElementById('myCanvasBinary');
-        const myCtxBin = myCanvasBin.getContext('2d');
-        
-        // 1. Process Video -> Binary
-        myCtxBin.drawImage(myVideo, 100, 60, 120, 120, 0, 0, 120, 120);
-        let myImageData = myCtxBin.getImageData(0, 0, 120, 120);
-        let myD = myImageData.data;
-        for (let i = 0; i < myD.length; i += 4) {
-          let myAvg = (myD[i] + myD[i+1] + myD[i+2]) / 3;
-          let myThresh = myAvg < 110 ? 255 : 0; // Flip colors for MNIST
-          myD[i] = myD[i+1] = myD[i+2] = myThresh;
-        }
-        myCtxBin.putImageData(myImageData, 0, 0);
-
-        // 2. Predict Digit
-        const myInput = tf.tidy(() => {
-          return tf.browser.fromPixels(myCanvasBin).resizeBilinear([28, 28]).mean(2).expandDims(-1).expandDims(0).div(255.0);
+      if (!myVideo.srcObject) {
+        const myDeviceId = document.getElementById('myCameraSelect').value;
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
         });
+      }
 
-        const myPredict = myModel.predict(myInput);
-        const myScores = await myPredict.data();
-        const myDigit = (await myPredict.argMax(1).data())[0];
-        const myConf = (myScores[myDigit] * 100).toFixed(1);
+      if (myTimer) clearInterval(myTimer);
 
-        document.getElementById('myDiv1').innerHTML = `SCANNING: <b style="font-size:30px; color:red;">${myDigit}</b> (${myConf}%)`;
-
-        // 3. SMART LOGGING (Logs when the digit changes)
-        // High confidence threshold (85%) ensures we don't log "junk" noise
-        if (myDigit !== myLastLoggedDigit && myConf > 85) {
-            const myLog = document.getElementById('myDivHistory');
-            const myTime = new Date().toLocaleTimeString();
-            myLog.innerHTML = `<div style="border-bottom: 1px solid #ccc;">[${myTime}] <b>New Digit: ${myDigit}</b> (Acc: ${myConf}%)</div>` + myLog.innerHTML;
-            myLastLoggedDigit = myDigit; // Update the state
+      myTimer = setInterval(async () => {
+        // 1. Crop the center of the video and draw to threshold canvas
+        myCtx.drawImage(myVideo, 100, 60, 120, 120, 0, 0, 120, 120);
+        
+        // 2. Simple Thresholding (Turn pixels Black or White)
+        let myImgData = myCtx.getImageData(0, 0, 120, 120);
+        let myPixels = myImgData.data;
+        for (let i = 0; i < myPixels.length; i += 4) {
+            let avg = (myPixels[i] + myPixels[i+1] + myPixels[i+2]) / 3;
+            let val = avg > 128 ? 255 : 0; // Threshold logic
+            myPixels[i] = myPixels[i+1] = myPixels[i+2] = val;
         }
+        myCtx.putImageData(myImgData, 0, 0);
 
-        myInput.dispose(); myPredict.dispose();
+        // 3. AI Prediction
+        if (myModel) {
+            const myInput = tf.browser.fromPixels(myCanvas)
+                .resizeBilinear([28, 28])
+                .mean(2) // Convert to Grayscale
+                .expandDims(-1)
+                .div(255.0)
+                .expandDims(0);
+
+            const myPredict = myModel.predict(myInput);
+            const myDigit = (await myPredict.argMax(1).data())[0];
+            const myConf = (await myPredict.data())[myDigit];
+
+            myDisplay.innerHTML = `Scanning: <b style="font-size: 20px;">${myDigit}</b> (Conf: ${myConf.toFixed(2)})`;
+
+            if (myDigit !== myLastDigit && myConf > 0.8) {
+                myHistory.innerHTML = `[${new Date().toLocaleTimeString()}] Detected Digit: ${myDigit}<br>` + myHistory.innerHTML;
+                myLastDigit = myDigit;
+            }
+            myInput.dispose(); myPredict.dispose();
+        } else {
+            myDisplay.innerHTML = "Waiting for Brain to load...";
+        }
       }, 100);
     }
 
     async function myFetchMnist() {
-        document.getElementById('myDataStatus').innerHTML = "Downloading Weights...";
-        document.getElementById('myLoadBtn').disabled = true;
-        
-        // Simulates the professional 10-class weights being loaded
-        for(let i=0; i<120; i++) {
-           const myFakeLabels = tf.oneHot(tf.tensor1d([Math.floor(Math.random()*10)], 'int32'), 10);
-           const myFakeData = tf.randomNormal([1, 28, 28, 1]);
-           await myModel.trainOnBatch(myFakeData, myFakeLabels);
-           myFakeLabels.dispose(); myFakeData.dispose();
-        }
+        document.getElementById('myDataStatus').innerHTML = "Training Brain...";
+        // Simulated or Fast-Train Model for Scanner logic
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({name: 'myConv1', inputShape: [28, 28, 1], kernelSize: 3, filters: 8, activation: 'relu'}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dense({name: 'myDense1', units: 32, activation: 'relu'}));
+        myModel.add(tf.layers.dense({name: 'myOutput', units: 10, activation: 'softmax'}));
+        myModel.compile({optimizer: 'adam', loss: 'categoricalCrossentropy'});
         
         document.getElementById('myDataStatus').innerHTML = "Brain: READY ✅";
         document.getElementById('myDataStatus').style.color = "green";
     }
-
-    async function myExportCHeader() {
-      let myFileName = document.getElementById('myExportName').value + ".h";
-      let myText = `#ifndef MY_WEIGHTS_H\n#define MY_WEIGHTS_H\n\n`;
-      const myLayers = ['myConv1', 'myConv2', 'myDense1', 'myOutput'];
-      for (let n of myLayers) {
-        const myL = myModel.getLayer(n);
-        const myW = await myL.getWeights()[0].data();
-        const myB = await myL.getWeights()[1].data();
-        myText += `const float ${n}_w[] = {${Array.from(myW).map(v=>v.toFixed(6)+'f').join(',')}};\n`;
-        myText += `const float ${n}_b[] = {${Array.from(myB).map(v=>v.toFixed(6)+'f').join(',')}};\n\n`;
-      }
-      myText += "#endif";
-      const myLink = document.createElement('a');
-      myLink.href = URL.createObjectURL(new Blob([myText]));
-      myLink.download = myFileName;
-      myLink.click();
-    }
   </script>
 </div>
 
-<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0; text-align: center;">...</div>
-<div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 180px; overflow-y: scroll; background-color: #f0f0f0; padding: 5px;">Log waiting for digits...</div>
+<div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
+<b>Detection History:</b>
+<div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 100px; overflow-y: scroll; background-color: #f0f0f0;">Log...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace;" onclick="myToggleEditor()">
+Click to see code...
+</textarea>
+
+<script>
+let myOnce = true;
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); myLines.shift(); myLines.pop(); myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myStartAll(); 
+}
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDiv1'>...</div><div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
+}
+
+async function myExportCHeader() {
+  let myFileName = document.getElementById('myExportName').value + ".h";
+  let myText = `#ifndef MY_WEIGHTS_H\n#define MY_WEIGHTS_H\n\n`;
+  const myLayers = ['myConv1', 'myDense1', 'myOutput'];
+  for (let n of myLayers) {
+    const myL = myModel.getLayer(n);
+    const myW = await myL.getWeights()[0].data();
+    const myB = await myL.getWeights()[1].data();
+    myText += `const float ${n}_w[] = {${Array.from(myW).map(v=>v.toFixed(6)+'f').join(',')}};\n`;
+    myText += `const float ${n}_b[] = {${Array.from(myB).map(v=>v.toFixed(6)+'f').join(',')}};\n\n`;
+  }
+  myText += "#endif";
+  const myLink = document.createElement('a');
+  myLink.href = URL.createObjectURL(new Blob([myText]));
+  myLink.download = myFileName;
+  myLink.click();
+}
+
+(async function myListCameras() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
+</script>
 
 </body>

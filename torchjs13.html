@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs13.html - Persistent Validation</h2>
+<h2 align="center">torchjs13.html - Persistent Validation (Stable)</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
 <b>Load-Safe:</b> This version ensures the <b>Exam Score</b> works even after loading a brain from disk.<br>
-<b>Note:</b> You must capture at least one new frame for B, H, and P after loading to see the score!
+Changing code in the black box and clicking <b>Update</b> will restart the brain without losing your camera feed.
 </div><br>
 
 <div id="myCodeSpace"> 
@@ -28,7 +28,9 @@
     style="border: 5px solid black; background-color: #ddd;"></video>
 
   <script>
+    // Variables kept outside the function so they persist during live-editing
     var myModel;
+    var myTimer = null;
     var myTrainData = {0: [], 1: [], 2: []}; 
     var myValData = {0: [], 1: [], 2: []}; 
     var myClassNames = {0: "BACKGROUND", 1: "HAND", 2: "OBJECT"};
@@ -42,20 +44,26 @@
       const myHistory = document.getElementById('myDivHistory');
       const myDeviceId = document.getElementById('myCameraSelect').value;
       
-      const myStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
-      });
-      myVideo.srcObject = myStream;
+      if (!myVideo.srcObject) {
+        const myStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+        });
+        myVideo.srcObject = myStream;
+      }
 
-      myModel = tf.sequential();
-      myModel.add(tf.layers.conv2d({inputShape: [64, 64, 3], kernelSize: 5, filters: 8, strides: 4, activation: 'relu'}));
-      myModel.add(tf.layers.flatten());
-      myModel.add(tf.layers.dense({units: 32, activation: 'relu'}));
-      myModel.add(tf.layers.dense({units: 3, activation: 'softmax'})); 
+      // Initialize Model if it doesn't exist
+      if (!myModel) {
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({inputShape: [64, 64, 3], kernelSize: 5, filters: 8, strides: 4, activation: 'relu'}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dense({units: 32, activation: 'relu'}));
+        myModel.add(tf.layers.dense({units: 3, activation: 'softmax'})); 
+        myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+      }
 
-      myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+      if (myTimer) clearInterval(myTimer);
 
-      setInterval(async () => {
+      myTimer = setInterval(async () => {
         const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
 
         // --- TRAINING ---
@@ -67,9 +75,11 @@
             ]);
             const myBatchLabels = tf.tensor2d([[1,0,0], [0,1,0], [0,0,1]]);
             await myModel.trainOnBatch(myBatchInputs, myBatchLabels);
+            myBatchInputs.dispose();
+            myBatchLabels.dispose();
         }
 
-        // --- VALIDATION (Only runs if buffers aren't empty) ---
+        // --- VALIDATION ---
         if (myValData[0].length > 0 && myValData[1].length > 0 && myValData[2].length > 0) {
             const myExamInputs = tf.concat([
                 myValData[0][Math.floor(Math.random() * myValData[0].length)],
@@ -77,7 +87,7 @@
                 myValData[2][Math.floor(Math.random() * myValData[2].length)]
             ]);
             const myExamOut = myModel.predict(myExamInputs);
-            const myExamPreds = myExamOut.argMax(1).dataSync();
+            const myExamPreds = (await myExamOut.argMax(1).data());
             
             let myCorrectCount = 0;
             if (myExamPreds[0] === 0) myCorrectCount++;
@@ -107,50 +117,25 @@
       }, 100);
     }
 
-    // --- Persistence Row Functions (UI Updated to Alert Load Success) ---
-
-    async function mySaveLocal() {
-      await myModel.save(myLocalKey);
-      alert('Brain saved to browser.');
-    }
-
+    async function mySaveLocal() { await myModel.save(myLocalKey); alert('Saved!'); }
     async function myLoadLocal() {
       try {
         myModel = await tf.loadLayersModel(myLocalKey);
         myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
-        alert('Brain loaded from local memory.');
-      } catch (e) { alert('No local brain found.'); }
+        alert('Loaded!');
+      } catch (e) { alert('None found.'); }
     }
-
-    async function mySaveDisk() {
-      const myName = document.getElementById('myFileName').value;
-      await myModel.save('downloads://' + myName);
-    }
-
+    async function mySaveDisk() { await myModel.save('downloads://' + document.getElementById('myFileName').value); }
     async function myLoadDisk(myFileList) {
-      if (myFileList.length < 2) {
-        alert('Select both .json and .bin files.');
-        return;
-      }
-      let myFiles = Array.from(myFileList);
-      myFiles.sort((a, b) => a.name.endsWith('.json') ? -1 : 1);
-      let myLoadedName = myFiles[0].name.replace('.json', '');
-
-      try {
-        myModel = await tf.loadLayersModel(tf.io.browserFiles(myFiles));
-        myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
-        document.getElementById('myFileName').value = myLoadedName;
-        alert('Success! Brain loaded: ' + myLoadedName);
-      } catch (myError) {
-        alert('Load failed: ' + myError.message);
-      }
+      let myFiles = Array.from(myFileList).sort((a, b) => a.name.endsWith('.json') ? -1 : 1);
+      myModel = await tf.loadLayersModel(tf.io.browserFiles(myFiles));
+      myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+      alert('Disk Load Success!');
     }
 
     function myCollect(myID) {
       const myVideo = document.getElementById('myVideo1');
       const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
-      
-      // 80/20 Split
       if (Math.random() < 0.2) {
         myValData[myID].push(myFrame);
         if (myValData[myID].length > 10) myValData[myID].shift();
@@ -163,20 +148,45 @@
 </div>
 
 <div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
-
 <b>Detection History:</b>
 <div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 150px; overflow-y: scroll; background-color: #f0f0f0;">Log...</div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden;" onclick="myApplyAndRun()"><br>
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace;" onclick="myToggleEditor()">
 Click to see code...
 </textarea>
 
 <script>
+let myOnce = true;
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); myLines.shift(); myLines.pop(); myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myStartAll(); 
+}
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
    myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value += '\n<div id=\'myDiv1\'>...</div><div id=\'myDivHistory\'>...</div>';
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
+(async function myListCameras() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
 </script>
 
 </body>

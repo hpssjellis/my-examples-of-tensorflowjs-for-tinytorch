@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs22.html - Model Quantization</h2>
+<h2 align="center">torchjs22.html - Stable Model Quantization</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-<b>Step 22 Logic:</b> Model Compression.<br>
-<b>The Challenge:</b> Move the slider to the left to "Quantize" the weights. Can the AI still recognize the digit when the numbers are tiny?
+<b>Compression Logic:</b> Large numbers take up too much space. We "Quantize" (round) them to save memory. 
+Move the slider to see the <b>Memory Size</b> drop, but watch out for the <b>Accuracy</b>!
 </div><br>
 
 <div id="myCodeSpace">
@@ -15,82 +15,108 @@
     <div style="flex: 1; min-width: 300px; border: 2px solid green; padding: 10px;">
       <b>1. Precision Control:</b><br>
       <input type="range" id="mySlider" min="1" max="32" value="32" style="width: 80%;" oninput="myQuantize()">
-      <span id="myBits">32</span> bits<br><br>
+      <span id="myBits" style="font-weight:bold;">32</span> bits<br><br>
       
       <b>Model Memory Size:</b> 
-      <span id="mySize" style="font-size: 20px; color: red; font-weight: bold;">4.0 MB</span>
+      <div id="mySize" style="font-size: 24px; color: red; font-weight: bold;">4.0 MB</div>
     </div>
 
-    <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
-      <b>2. Raw Weights (The Brain's Data):</b><br>
-      <div id="myWeightList" style="font-family: monospace; font-size: 14px; background: #eee; padding: 5px; height: 120px; overflow-y: scroll;">
-        0.87654321, -0.12345678, 0.45678901...
+    <div style="flex: 1.5; min-width: 300px; border: 2px solid blue; padding: 10px;">
+      <b>2. Quantized Weights (Sample):</b><br>
+      <div id="myWeightBox" style="font-family: monospace; font-size: 12px; background: #eee; padding: 10px; height: 120px; overflow-y: scroll; border: 1px inset gray;">
+        Generating...
       </div>
     </div>
   </div>
 
-  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff;">
-    AI Accuracy: 99.2% (Full Precision)
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #fff4e6; min-height: 80px;">
+    Quantization results will appear here...
   </div>
 
   <script>
-    // Standard descriptive naming
-    async function myQuantize() {
-      const myBits = document.getElementById('mySlider').value;
-      const mySizeText = document.getElementById('mySize');
-      const myWeightBox = document.getElementById('myWeightList');
+    // Original high-precision weights (Float32)
+    var myOriginalWeights = [0.12345678, -0.98765432, 0.45612378, -0.22233344, 0.88877766, -0.11122233];
+
+    function myQuantize() {
+      const myBits = parseInt(document.getElementById('mySlider').value);
+      const myBitLabel = document.getElementById('myBits');
+      const mySizeDisplay = document.getElementById('mySize');
+      const myWeightBox = document.getElementById('myWeightBox');
       const myHistory = document.getElementById('myDivHistory');
-      
-      document.getElementById('myBits').innerHTML = myBits;
 
-      // 1. Calculate Simulated Size
-      // Float32 = 4MB, so 8-bit = 1MB
-      const myMB = (myBits / 32 * 4).toFixed(2);
-      mySizeText.innerHTML = myMB + " MB";
+      myBitLabel.innerHTML = myBits;
 
-      // 2. Simulate Weight Precision Loss
-      const myOriginalWeights = [0.876543, -0.123456, 0.456789, -0.987654, 0.234567];
+      // 1. Calculate Simulated Memory Size (Full model = 1,000,000 weights)
+      // (1,000,000 weights * bits) / 8 / 1024 / 1024 = MB
+      const myMB = ((1000000 * myBits) / 8 / 1024 / 1024).toFixed(2);
+      mySizeDisplay.innerHTML = myMB + " MB";
+      mySizeDisplay.style.color = myBits < 9 ? "green" : "red";
+
+      // 2. Quantization Math (Simulating bit-depth reduction)
+      const mySteps = Math.pow(2, myBits);
       let myNewWeights = [];
       
-      // Math: Rounding to the nearest 'step' based on bits
-      const mySteps = Math.pow(2, myBits);
       myOriginalWeights.forEach(w => {
-         let myQuantized = Math.round(w * mySteps) / mySteps;
-         myNewWeights.push(myQuantized.toFixed(myBits < 8 ? 2 : 6));
+         // This is the core quantization formula
+         let myQuantized = Math.round(w * (mySteps/2)) / (mySteps/2);
+         myNewWeights.push(myQuantized.toFixed(myBits < 10 ? 3 : 6));
       });
 
-      myWeightBox.innerHTML = myNewWeights.join(", <br>");
+      myWeightBox.innerHTML = "<b>Float32 Weights converted to " + myBits + "-bit:</b><br><br>" + myNewWeights.join(", <br>");
 
       // 3. Performance impact logic
       let myAcc = 99.2;
-      if (myBits < 8) myAcc = (myAcc - (8 - myBits) * 10).toFixed(1);
-      if (myAcc < 10) myAcc = 10.0; // Baseline random guess
+      if (myBits < 16) myAcc -= (16 - myBits) * 0.5;
+      if (myBits < 6) myAcc -= (6 - myBits) * 15;
+      if (myAcc < 10) myAcc = 10.0; // Random guess baseline
 
-      myHistory.innerHTML = `<b>Compression Result:</b><br>
-        Bits: ${myBits}<br>
-        Estimated Accuracy: ${myAcc}%<br>
-        Status: ${myBits < 4 ? '<span style="color:red;">WARNING: Model Corrupted</span>' : '<span style="color:green;">Safe for ESP32</span>'}`;
+      myHistory.innerHTML = `<b>Compression Report:</b><br>
+        Bit Precision: ${myBits}-bit<br>
+        Estimated AI Accuracy: <b style="color:${myAcc < 70 ? 'red' : 'green'}">${myAcc.toFixed(1)}%</b><br>
+        Hardware Compatibility: ${myBits <= 8 ? '✅ Ready for ESP32' : '⚠️ Too Large for Tiny Chips'}`;
       
-      // Real Tensor Example
-      const myTensor = tf.tensor1d(myNewWeights.map(Number));
-      myTensor.dispose();
+      // Cleanup for memory safety in students' browsers
+      const myDummyTensor = tf.tensor1d(myNewWeights.map(Number));
+      myDummyTensor.dispose();
     }
-
-    window.onload = myQuantize;
   </script>
 </div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
-Click to see the Quantization math...
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myToggleEditor()">
+Click here to see the Quantization math...
 </textarea>
 
 <script>
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); // Remove script
+  myLines.shift(); // Remove spacer
+  myLines.pop();   // Remove div
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myQuantize(); 
+}
+
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
-   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
-   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
+
+window.onload = myQuantize;
 </script>
 
 </body>

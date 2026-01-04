@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs20.html - Self-Attention Heatmap</h2>
+<h2 align="center">torchjs20.html - Stable Attention Heatmap</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-<b>Step 20 Logic:</b> Self-Attention.<br>
-<b>Instructions:</b> Type a sentence. Click any word in the "Attention Grid" to see how the AI connects it to other words!
+<b>Self-Attention:</b> Type a sentence below. Click a word in the grid to see how much "Attention" the AI pays to every other word. 
+Use <b>Update and Run</b> to change the scoring logic!
 </div><br>
 
 <div id="myCodeSpace">
@@ -17,85 +17,105 @@
 
   <div style="display: flex; gap: 20px; padding: 10px; flex-wrap: wrap;">
     <div style="flex: 1.5; min-width: 300px; border: 2px solid blue; padding: 10px;">
-      <b>2. Attention Map (Click a word):</b><br><br>
+      <b>2. Attention Grid (Click to focus):</b><br><br>
       <div id="myAttentionGrid" style="display: flex; flex-wrap: wrap; gap: 10px;"></div>
     </div>
 
-    <div id="myDivHistory" style="flex: 1; min-width: 250px; border: 2px solid orange; padding: 10px; font-family: monospace; background-color: #f0f8ff;">
-      Click a word to see its "Focus".
+    <div style="flex: 1; min-width: 300px; border: 2px solid orange; padding: 10px;">
+      <b>3. Attention Scores:</b><br>
+      <div id="myDivHistory" style="font-family: monospace; font-size: 14px; background: #fff4e6; padding: 5px;"></div>
     </div>
   </div>
 
   <script>
-    // Descriptive names and simple JS as requested
-    async function myProcessAttention() {
-      const myText = document.getElementById('myInputText').value;
-      const myWords = myText.split(/\s+/).filter(w => w.length > 0);
-      const myGrid = document.getElementById('myAttentionGrid');
-      myGrid.innerHTML = "";
+    var myTargetIndex = 5; // Default focus on "it"
 
-      myWords.forEach((myWord, myIdx) => {
-        let myBtn = document.createElement('button');
-        myBtn.innerHTML = myWord;
+    function myProcessAttention() {
+      const myInput = document.getElementById('myInputText').value;
+      const myGrid = document.getElementById('myAttentionGrid');
+      const myHistory = document.getElementById('myDivHistory');
+      
+      const myWords = myInput.split(/\s+/).filter(x => x.length > 0);
+      myGrid.innerHTML = "";
+      let myTotalText = "";
+      let myFocusData = [];
+
+      myWords.forEach((w, i) => {
+        const myBtn = document.createElement('input');
+        myBtn.type = "button";
+        myBtn.value = w;
         myBtn.style.padding = "10px";
         myBtn.style.fontSize = "16px";
         myBtn.style.cursor = "pointer";
-        // Static link to function instead of event listener
-        myBtn.onclick = function() { myShowFocus(myIdx, myWords); };
+        myBtn.style.border = (i === myTargetIndex) ? "3px solid red" : "1px solid gray";
+        
+        // Change focus when clicked
+        myBtn.onclick = () => { myTargetIndex = i; myProcessAttention(); };
         myGrid.appendChild(myBtn);
-      });
-    }
 
-    async function myShowFocus(myFocusIdx, myAllWords) {
-      const myGridBtns = document.getElementById('myAttentionGrid').children;
-      const myHistory = document.getElementById('myDivHistory');
-      const myTargetWord = myAllWords[myFocusIdx];
-      
-      let myFocusData = [];
-      let myTotalText = `<b>AI Focus for "${myTargetWord}":</b><br><br>`;
+        // --- SIMULATED ATTENTION LOGIC ---
+        // Students can edit these rules to see how the heatmap changes
+        let myScore = 0.1; 
+        const myTargetWord = myWords[myTargetIndex]?.toLowerCase();
+        const myCurrentWord = w.toLowerCase();
 
-      // Simulate a Self-Attention Score (Dot Product Similarity)
-      // In a real model, this uses the Query and Key vectors
-      myAllWords.forEach((w, i) => {
-        // Mock logic: "it" attends to "robot", "happy" attends to "robot"
-        let myScore = 0.1; // Baseline
-        if (i === myFocusIdx) myScore = 0.9; // Self-attention is always high
+        if (i === myTargetIndex) myScore = 1.0; // Self-focus is always 100%
         
-        // Logical connections for students to see
-        if (myTargetWord === "it" && w === "robot") myScore = 0.8;
-        if (myTargetWord === "works" && w === "robot") myScore = 0.7;
-        if (myTargetWord === "happy" && w === "robot") myScore = 0.6;
+        // Logic: Connect "it" to the Subject
+        if (myTargetWord === "it" && (myCurrentWord === "robot" || myCurrentWord === "the")) myScore = 0.8;
+        if (myTargetWord === "works" && myCurrentWord === "robot") myScore = 0.7;
+        if (myTargetWord === "happy" && (myCurrentWord === "robot" || myCurrentWord === "is")) myScore = 0.6;
 
-        myFocusData.push(myScore);
-        
-        // Color the buttons based on the focus score (Heatmap style)
-        myGridBtns[i].style.backgroundColor = `rgba(255, 165, 0, ${myScore})`;
-        myTotalText += `${w}: ${(myScore * 100).toFixed(0)}% focus<br>`;
+        myFocusData.push(myScore.toFixed(2));
+        myBtn.style.backgroundColor = `rgba(255, 165, 0, ${myScore})`; // Orange Heatmap
+        myTotalText += `<b>${w}:</b> ${(myScore * 100).toFixed(0)}% focus<br>`;
       });
 
-      myHistory.innerHTML = myTotalText;
+      myHistory.innerHTML = `Focusing on: <b>${myWords[myTargetIndex]}</b><br><br>` + myTotalText;
       
-      // Show the student the Attention Vector as a Tensor
-      const myAttentionTensor = tf.tensor1d(myFocusData);
-      myHistory.innerHTML += `<br><b>Tensor:</b> [${myFocusData.join(", ")}]`;
-      myAttentionTensor.dispose();
+      // Visualize as a Tensor
+      const myTensor = tf.tensor1d(myFocusData.map(Number));
+      myHistory.innerHTML += `<br><b>Attention Tensor:</b><br>[${myFocusData.join(", ")}]`;
+      myTensor.dispose();
     }
-
-    window.onload = myProcessAttention;
   </script>
 </div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
-Click to see the Attention Mechanism source code...
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myToggleEditor()">
+Click here to see the Attention Mechanism code...
 </textarea>
 
 <script>
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); // Remove script
+  myLines.shift(); // Remove spacer
+  myLines.pop();   // Remove div
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myProcessAttention(); 
+}
+
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
-   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
-   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
+
+window.onload = myProcessAttention;
 </script>
 
 </body>

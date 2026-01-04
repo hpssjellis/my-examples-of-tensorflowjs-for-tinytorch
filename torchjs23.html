@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs23.html - Brain Pruning</h2>
+<h2 align="center">torchjs23.html - Stable Brain Pruning</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-<b>Step 23 Logic:</b> Network Pruning.<br>
-<b>Instructions:</b> Move the slider to "Cut" connections. Watch the brain diagram to see neurons disappear!
+<b>Pruning Logic:</b> AI models often have "lazy" neurons. We "Prune" (cut) connections that are close to zero to save speed. 
+Move the slider to see the brain connections disappear and check the <b>Efficiency</b> report!
 </div><br>
 
 <div id="myCodeSpace">
@@ -14,56 +14,58 @@
     
     <div style="flex: 1; min-width: 300px; border: 2px solid green; padding: 10px;">
       <b>1. Pruning Threshold:</b><br>
-      <input type="range" id="myPruneSlider" min="0" max="100" value="0" style="width: 80%;" oninput="myPrune()">
-      <span id="myPercent">0</span>% Cut<br><br>
+      <input type="range" id="myPruneSlider" min="0" max="100" value="10" style="width: 80%;" oninput="myPrune()">
+      <span id="myPercent" style="font-weight:bold;">10</span>% Cut<br><br>
       
       <b>Active Connections:</b> 
-      <span id="myCount" style="font-size: 20px; color: blue; font-weight: bold;">1000</span>
+      <div id="myCount" style="font-size: 24px; color: blue; font-weight: bold;">1000</div>
     </div>
 
     <div style="flex: 1.5; min-width: 300px; border: 2px solid blue; padding: 10px; text-align: center;">
-      <b>2. Neuron Connection Map:</b><br>
-      <canvas id="myBrainCanvas" width="300" height="200" style="border:1px solid black; background: #111;"></canvas>
+      <b>2. Visual Brain Map:</b><br>
+      <canvas id="myCanvasPrune" width="300" height="200" style="border:1px solid black; background: #111;"></canvas>
     </div>
   </div>
 
-  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff;">
-    Brain Health: 100% Functional
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #fff4e6; min-height: 80px;">
+    Pruning report will appear here...
   </div>
 
   <script>
-    // Descriptive names and simple JS
-    const myBaseWeights = [];
-    for(let i=0; i<200; i++) myBaseWeights.push(Math.random() * 2 - 1); // Mock weights -1 to 1
+    // Generate some random weights for the "Brain"
+    var myBaseWeights = [];
+    for(let i=0; i<200; i++) { myBaseWeights.push(Math.random()); }
 
-    async function myPrune() {
-      const myThreshold = document.getElementById('myPruneSlider').value / 100;
-      const myCanvas = document.getElementById('myBrainCanvas');
+    function myPrune() {
+      const mySlider = document.getElementById('myPruneSlider');
+      const myCanvas = document.getElementById('myCanvasPrune');
       const myCtx = myCanvas.getContext('2d');
       const myHistory = document.getElementById('myDivHistory');
       
-      document.getElementById('myPercent').innerHTML = (myThreshold * 100).toFixed(0);
-      myCtx.clearRect(0, 0, myCanvas.width, myCanvas.height);
+      let myThreshold = mySlider.value / 100;
+      document.getElementById('myPercent').innerHTML = mySlider.value;
 
+      myCtx.clearRect(0, 0, myCanvas.width, myCanvas.height);
       let myActiveCount = 0;
-      
-      // Draw simulated connections
-      myBaseWeights.forEach((w, i) => {
-        // Logical "Pruning": If weight is near zero, skip it!
-        if (Math.abs(w) > myThreshold) {
+
+      // Draw connections
+      myBaseWeights.forEach((myW, i) => {
+        let myX = (i % 20) * 15 + 10;
+        let myY = Math.floor(i / 20) * 18 + 20;
+
+        // The Pruning Logic: If weight is less than threshold, don't draw it!
+        if (myW > myThreshold) {
           myActiveCount++;
-          const myX = (i % 20) * 15 + 10;
-          const myY = Math.floor(i / 20) * 20 + 10;
-          
-          myCtx.strokeStyle = w > 0 ? `rgba(0, 255, 0, ${Math.abs(w)})` : `rgba(255, 0, 0, ${Math.abs(w)})`;
           myCtx.beginPath();
           myCtx.moveTo(myX, myY);
-          myCtx.lineTo(myX + 10, myY + 15);
+          myCtx.lineTo(myX + 10, myY + 12);
+          myCtx.strokeStyle = `rgba(0, 255, 0, ${myW})`;
+          myCtx.lineWidth = 2;
           myCtx.stroke();
         }
       });
 
-      document.getElementById('myCount').innerHTML = myActiveCount * 5; // Simulating total network scale
+      document.getElementById('myCount').innerHTML = myActiveCount * 5; // Scaling for effect
 
       // Intelligence impact logic
       let myStatus = "Healthy";
@@ -73,29 +75,51 @@
 
       myHistory.innerHTML = `<b>Pruning Report:</b><br>
         Status: <b style="color:${myColor}">${myStatus}</b><br>
-        Efficiency: AI is now ${ (myThreshold * 50).toFixed(0) }% faster.<br>
-        Tensor Check: Pruned ${200 - myActiveCount} near-zero values.`;
+        Efficiency: AI is now <b>${ (myThreshold * 60).toFixed(0) }% faster</b>.<br>
+        Hardware Note: Pruning allows smaller chips to skip unnecessary math.`;
       
-      // Simple tensor cleanup
+      // Keep memory clean
       const myDummyTensor = tf.tensor1d(myBaseWeights);
       myDummyTensor.dispose();
     }
-
-    window.onload = myPrune;
   </script>
 </div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
-Click to see the Pruning logic...
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myToggleEditor()">
+Click here to see the Pruning source code...
 </textarea>
 
 <script>
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); // Remove script
+  myLines.shift(); // Remove spacer
+  myLines.pop();   // Remove div
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myPrune(); 
+}
+
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
-   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
-   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
+
+window.onload = myPrune;
 </script>
 
 </body>

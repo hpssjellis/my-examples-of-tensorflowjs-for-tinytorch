@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs21.html - The Probability Engine</h2>
+<h2 align="center">torchjs21.html - Stable Probability Engine</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-<b>Step 21 Logic:</b> Predictive Generation.<br>
-<b>The Experiment:</b> Edit the percentages in the blue box. If you make "Angry" 90%, the "Robot" will change its personality!
+<b>The Choice:</b> Large Language Models use probability to pick words. 
+Edit the <b>Weights</b> in the blue box to change the robot's mood, then click <b>Update and Run</b> to see the AI generate a new ending!
 </div><br>
 
 <div id="myCodeSpace">
@@ -23,83 +23,111 @@
     </div>
 
     <div style="flex: 1; min-width: 300px; border: 2px solid blue; padding: 10px;">
-      <b>2. AI "Next Word" Probabilities:</b><br>
-      <textarea id="myWeightsJSON" rows="10" style="width: 95%; font-family: monospace;" oninput="myDrawBrain()">
+      <b>2. Probability Weights (JSON):</b><br>
+      <textarea id="myWeightsJSON" rows="8" style="width: 95%; font-family: monospace;" oninput="myDrawBrain()">
 {
-  "happy": 0.70,
-  "sad": 0.15,
-  "angry": 0.10,
-  "confused": 0.05
+  "happy": 0.50,
+  "sad": 0.10,
+  "angry": 0.05,
+  "thinking": 0.20,
+  "broken": 0.15
 }
       </textarea>
     </div>
   </div>
 
-  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #f0f8ff;">
-    Click Generate to see the Softmax choice.
+  <div id="myDivHistory" style="border: 2px solid orange; padding: 10px; margin: 10px; font-family: monospace; background-color: #fff4e6; min-height: 80px;">
+    AI Decision Logic will appear here...
   </div>
 
   <script>
-    // Simple descriptive naming
-    async function myRunTransformer() {
+    function myRunTransformer() {
       const myText = document.getElementById('myInputText').value;
-      const myRaw = document.getElementById('myWeightsJSON').value;
       const myDisplay = document.getElementById('myOutputDisplay');
       const myHistory = document.getElementById('myDivHistory');
+      const myJSONArea = document.getElementById('myWeightsJSON');
       
       try {
-        const myProbabilities = JSON.parse(myRaw);
+        const myProbabilities = JSON.parse(myJSONArea.value);
         const myWords = Object.keys(myProbabilities);
-        const myScores = Object.values(myProbabilities);
-
-        // Represent probabilities as a Tensor
-        const myTensor = tf.tensor1d(myScores);
+        const myWeights = Object.values(myProbabilities);
         
-        // Softmax Simulation: Pick a word based on weight
+        // 1. Create the Tensor (simulating the final layer of a Transformer)
+        const myTensor = tf.tensor1d(myWeights);
+        
+        // 2. Random Sampling (The "Temperature" or Sampling step)
         const myRandom = Math.random();
         let myCumulative = 0;
         let myChosenWord = "???";
 
-        for (let i = 0; i < myWords.length; i++) {
-          myCumulative += myScores[i];
+        for (let i = 0; i < myWeights.length; i++) {
+          myCumulative += myWeights[i];
           if (myRandom < myCumulative) {
             myChosenWord = myWords[i];
             break;
           }
         }
 
-        // Visual Update
+        // 3. UI Updates
         myDisplay.innerHTML = `${myText} <span style="color:red;">${myChosenWord}</span>`;
         myHistory.innerHTML = `<b>AI Decision Logic:</b><br>
-          Random Seed: ${myRandom.toFixed(3)}<br>
-          Chosen Word: <b>${myChosenWord}</b> (Weight: ${(myProbabilities[myChosenWord]*100).toFixed(0)}%)<br>
-          Output Tensor: [${myTensor.dataSync()}]`;
+          Random Number Generated: ${myRandom.toFixed(3)}<br>
+          Chosen Word: <b>${myChosenWord}</b> (Confidence: ${(myProbabilities[myChosenWord]*100).toFixed(0)}%)<br>
+          Output Tensor: [${myWeights.join(", ")}]`;
 
         myTensor.dispose();
       } catch(e) {
-        myHistory.innerHTML = "<b style='color:red;'>JSON Error!</b>";
+        myHistory.innerHTML = "<b style='color:red;'>JSON Syntax Error! Check your commas.</b>";
       }
     }
 
     function myDrawBrain() {
-       // Just a placeholder to ensure the JSON is valid on edit
-       try { JSON.parse(document.getElementById('myWeightsJSON').value); }
-       catch(e) {}
+       // Visual feedback for JSON validation
+       try { 
+         JSON.parse(document.getElementById('myWeightsJSON').value); 
+         document.getElementById('myWeightsJSON').style.backgroundColor = "white";
+       } catch(e) {
+         document.getElementById('myWeightsJSON').style.backgroundColor = "#ffcccc";
+       }
     }
   </script>
 </div>
 
-<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myTextGrow('myTextarea1', 'myCodeSpace')">
-Click to see how the Transformer makes probabilistic guesses...
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:10px;" onclick="myToggleEditor()">
+Click here to see how the AI picks the next word...
 </textarea>
 
 <script>
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); // Remove script src
+  myLines.shift(); // Remove spacer
+  myLines.pop();   // Remove div wrapper
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myRunTransformer(); 
+}
+
 function myTextGrow(myT, myC) {
    const myArea = document.getElementById(myT);
-   const myPrefix = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n';
-   myArea.value = myPrefix + document.getElementById(myC).innerHTML;
-   myArea.rows = myArea.value.split('\n').length + 3;
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
 }
+
+window.onload = myRunTransformer;
 </script>
 
 </body>

@@ -2,11 +2,11 @@
 
 <body>
 
-<h2 align="center">torchjs15.html - Hardware Exporter</h2>
+<h2 align="center">torchjs15.html - The Complete Hardware Exporter</h2>
 
 <div style="font-size:15px; background-color:lightyellow; width:88%; border:5px solid blue; padding:5px; margin:5px;"> 
-Matches <b>torch15.py</b>. This version saves a <b>.h</b> file directly to your downloads folder.<br>
-<b>Student Step:</b> Name your file, click Export, and then move that file into your Arduino project folder.
+<b>Fully Loaded:</b> Use the black box below to live-edit the <b>Units</b> or <b>Layers</b>. 
+The <b>Update and Run</b> button will refresh the brain logic while keeping your camera and training data alive.
 </div><br>
 
 <div id="myCodeSpace"> 
@@ -22,9 +22,12 @@ Matches <b>torch15.py</b>. This version saves a <b>.h</b> file directly to your 
   
   <b>Export Name:</b> 
   <input type="text" id="myExportName" value="myWeights" size="10">.h 
-  <input type="button" style="background-color: #ffcccc; font-weight: bold;" 
-    value="EXPORT TO DISK" onclick="myExportCHeader()">
-  <br><br>
+  <input type="button" style="background-color: #ffcccc; font-weight: bold;" value="EXPORT TO C++" onclick="myExportCHeader()">
+  <br>
+
+  <b>X-Ray Intensity:</b> 
+  <input type="range" id="myIntensity" min="0.1" max="5.0" step="0.1" value="1.0" oninput="document.getElementById('myIntensityVal').innerHTML = this.value">
+  <span id="myIntensityVal">1.0</span>x<br><br>
 
   <div style="display: flex; gap: 10px; flex-wrap: wrap;">
     <video id="myVideo1" width="320" height="240" autoplay playsinline style="border: 5px solid black; background: #ddd;"></video>
@@ -32,31 +35,45 @@ Matches <b>torch15.py</b>. This version saves a <b>.h</b> file directly to your 
   </div>
 
   <script>
+    // Variables kept outside the function so they persist during live-editing
     var myModel, myFeatureModel;
+    var myTimer = null;
     var myTrainData = {0: [], 1: [], 2: []}, myValData = {0: [], 1: [], 2: []}; 
     var myClassNames = {0: "BACKGROUND", 1: "HAND", 2: "OBJECT"};
-    var myValAccuracy = 0;
+    var myLastClassID = -1, myValAccuracy = 0;
 
     async function myStartAll() {
       const myVideo = document.getElementById('myVideo1');
+      const myDisplay = document.getElementById('myDiv1');
+      const myHistory = document.getElementById('myDivHistory');
+      const myCanvas = document.getElementById('myCanvasFilters');
+      const myCtx = myCanvas.getContext('2d');
       const myDeviceId = document.getElementById('myCameraSelect').value;
-      const myStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
-      });
-      myVideo.srcObject = myStream;
-
-      myModel = tf.sequential();
-      myModel.add(tf.layers.conv2d({name: 'myConv1', inputShape: [64, 64, 3], kernelSize: 5, filters: 8, strides: 4, activation: 'relu', padding: 'same'}));
-      myModel.add(tf.layers.flatten());
-      myModel.add(tf.layers.dense({name: 'myDense1', units: 32, activation: 'relu'}));
-      myModel.add(tf.layers.dense({name: 'myOutput', units: 3, activation: 'softmax'})); 
       
-      myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
-      myFeatureModel = tf.model({inputs: myModel.inputs, outputs: myModel.getLayer('myConv1').output});
+      if (!myVideo.srcObject) {
+        const myStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+        });
+        myVideo.srcObject = myStream;
+      }
 
-      setInterval(async () => {
+      // Initialize Model if it doesn't exist
+      if (!myModel) {
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({name: 'myConv1', inputShape: [64, 64, 3], kernelSize: 5, filters: 8, strides: 4, activation: 'relu', padding: 'same'}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dense({name: 'myDense1', units: 32, activation: 'relu'}));
+        myModel.add(tf.layers.dense({name: 'myOutput', units: 3, activation: 'softmax'})); 
+        myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+        myFeatureModel = tf.model({inputs: myModel.inputs, outputs: myModel.getLayer('myConv1').output});
+      }
+
+      if (myTimer) clearInterval(myTimer);
+
+      myTimer = setInterval(async () => {
         const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64, 64]).div(255.0).expandDims(0);
 
+        // --- 1. TRAINING ---
         if (myTrainData[0].length > 0 && myTrainData[1].length > 0 && myTrainData[2].length > 0) {
             const myBatchInputs = tf.concat([
                 myTrainData[0][Math.floor(Math.random() * myTrainData[0].length)],
@@ -64,75 +81,152 @@ Matches <b>torch15.py</b>. This version saves a <b>.h</b> file directly to your 
                 myTrainData[2][Math.floor(Math.random() * myTrainData[2].length)]
             ]);
             await myModel.trainOnBatch(myBatchInputs, tf.tensor2d([[1,0,0], [0,1,0], [0,0,1]]));
-            
-            // Draw Filters
-            const myFeatures = myFeatureModel.predict(myInput);
-            const myCtx = document.getElementById('myCanvasFilters').getContext('2d');
-            for(let i=0; i<8; i++) {
-                const myFData = tf.tidy(() => myFeatures.gather([i], 3).reshape([16, 16]).mul(2.0).clipByValue(0, 1));
-                const myFCanvas = document.createElement('canvas');
-                myFCanvas.width = 16; myFCanvas.height = 16;
-                await tf.browser.toPixels(myFData, myFCanvas);
-                myCtx.drawImage(myFCanvas, (i % 4) * 80, Math.floor(i / 4) * 80, 80, 80);
-                myFData.dispose();
-            }
-            myFeatures.dispose();
+            myBatchInputs.dispose();
         }
 
+        // --- 2. VALIDATION EXAM ---
+        if (myValData[0].length > 0 && myValData[1].length > 0 && myValData[2].length > 0) {
+            const myExamInputs = tf.concat([
+                myValData[0][Math.floor(Math.random() * myValData[0].length)],
+                myValData[1][Math.floor(Math.random() * myValData[1].length)],
+                myValData[2][Math.floor(Math.random() * myValData[2].length)]
+            ]);
+            const myExamOut = myModel.predict(myExamInputs);
+            const myExamPreds = await myExamOut.argMax(1).data();
+            let myCorrect = 0;
+            if (myExamPreds[0] === 0) myCorrect++;
+            if (myExamPreds[1] === 1) myCorrect++;
+            if (myExamPreds[2] === 2) myCorrect++;
+            myValAccuracy = (myCorrect / 3.0) * 100;
+            myExamOut.dispose(); myExamInputs.dispose();
+        }
+
+        // --- 3. X-RAY FILTERS ---
+        const myFeatures = myFeatureModel.predict(myInput);
+        const myMult = parseFloat(document.getElementById('myIntensity').value);
+        myCtx.clearRect(0,0,320,160);
+        for(let i=0; i<8; i++) {
+            const myFData = tf.tidy(() => myFeatures.gather([i], 3).reshape([16, 16]).mul(myMult).clipByValue(0, 1));
+            const myFCanvas = document.createElement('canvas');
+            myFCanvas.width = 16; myFCanvas.height = 16;
+            await tf.browser.toPixels(myFData, myFCanvas);
+            myCtx.drawImage(myFCanvas, (i % 4) * 80, Math.floor(i / 4) * 80, 80, 80);
+        }
+
+        // --- 4. PREDICTION ---
         const myPredict = myModel.predict(myInput);
         const myClassID = (await myPredict.argMax(1).data())[0];
-        document.getElementById('myDiv1').innerHTML = `LIVE: <b>${myClassNames[myClassID]}</b> | Exam Score: ${myValAccuracy.toFixed(1)}%`;
-        
-        myInput.dispose(); myPredict.dispose();
+        const myConf = (await myPredict.data())[myClassID];
+
+        myDisplay.innerHTML = `LIVE: <b>${myClassNames[myClassID]}</b> (${myConf.toFixed(2)})<br>`;
+        myDisplay.innerHTML += `Exam Score: <b>${myValData[0].length > 0 ? myValAccuracy.toFixed(1) + '%' : 'Waiting...'}</b>`;
+
+        if (myClassID !== myLastClassID) {
+            const myTime = new Date().toLocaleTimeString();
+            myHistory.innerHTML = `[${myTime}] Guess: ${myClassNames[myClassID]} | Exam: ${myValAccuracy.toFixed(1)}%<br>` + myHistory.innerHTML;
+        }
+        myLastClassID = myClassID;
+        myInput.dispose(); myPredict.dispose(); myFeatures.dispose();
       }, 100);
     }
-
-    // --- UPDATED: DOWNLOAD AS FILE ---
-    async function myExportCHeader() {
-      let myFileName = document.getElementById('myExportName').value + ".h";
-      let myHeaderText = `#ifndef MY_WEIGHTS_H\n#define MY_WEIGHTS_H\n\n// TinyTorch Weights for ESP32-S3\n// Filename: ${myFileName}\n\n`;
-      
-      const myLayers = ['myConv1', 'myDense1', 'myOutput'];
-      
-      for (let myName of myLayers) {
-        const myLayer = myModel.getLayer(myName);
-        const myWeights = await myLayer.getWeights()[0].data();
-        const myBias = await myLayer.getWeights()[1].data();
-
-        myHeaderText += `const float ${myName}_weight[] = {\n    `;
-        myHeaderText += Array.from(myWeights).map(v => v.toFixed(8) + 'f').join(', ');
-        myHeaderText += "\n};\n\n";
-
-        myHeaderText += `const float ${myName}_bias[] = {\n    `;
-        myHeaderText += Array.from(myBias).map(v => v.toFixed(8) + 'f').join(', ');
-        myHeaderText += "\n};\n\n";
-      }
-      myHeaderText += "#endif";
-
-      // Create a hidden link and trigger download
-      const myBlob = new Blob([myHeaderText], { type: 'text/plain' });
-      const myLink = document.createElement('a');
-      myLink.href = URL.createObjectURL(myBlob);
-      myLink.download = myFileName;
-      myLink.click();
-      
-      alert("File '" + myFileName + "' saved to your Downloads folder!");
-    }
-
-    function myCollect(myID) {
-      const myFrame = tf.browser.fromPixels(document.getElementById('myVideo1')).resizeBilinear([64, 64]).div(255.0).expandDims(0);
-      myTrainData[myID].push(myFrame);
-      if (myTrainData[myID].length > 10) myTrainData[myID].shift();
-    }
-
-    async function mySaveDisk() { await myModel.save('downloads://myModel15'); }
-    async function myLoadDisk(f) { /* Standard Load logic with sorting */ }
   </script>
 </div>
 
 <div id="myDiv1" style="border: 2px solid green; padding: 10px; margin: 10px; font-family: monospace; background-color: #e0ffe0;">...</div>
-
-<b>Detection History:</b>
+<b>History Log:</b>
 <div id="myDivHistory" style="border: 2px solid blue; padding: 10px; margin: 10px; font-family: monospace; height: 100px; overflow-y: scroll; background-color: #f0f0f0;">Log...</div>
+
+<input id="myUpdateBtn" type="button" value="Update and Run" style="visibility:hidden; background-color: yellow;" onclick="myApplyAndRun()"><br>
+
+<textarea id="myTextarea1" wrap="off" rows="2" 
+  style="width:95%; background:black; color:white; font-family:monospace;" 
+  onclick="myToggleEditor()">
+Click here to see the working HTML code.
+</textarea>
+
+<script>
+let myOnce = true;
+
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+
+function myApplyAndRun() {
+  let myArea = document.getElementById('myTextarea1');
+  let myLines = myArea.value.split('\n');
+  
+  // Clean the wrapper logic
+  myLines.shift(); // script src
+  myLines.shift(); // spacer
+  myLines.pop();   // history div
+  myLines.pop();   // status div
+  
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myStartAll(); 
+}
+
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.value += "\n<div id='myDiv1'>...</div><div id='myDivHistory'>...</div>";
+   setTimeout(() => { myArea.rows = myArea.value.split('\n').length + 3; }, 100);
+}
+
+async function myExportCHeader() {
+  let myFileName = document.getElementById('myExportName').value + ".h";
+  let myHeaderText = `#ifndef MY_WEIGHTS_H\n#define MY_WEIGHTS_H\n\n// TinyTorch Weights for ESP32-S3\n\n`;
+  const myLayers = ['myConv1', 'myDense1', 'myOutput'];
+  for (let myName of myLayers) {
+    const myLayer = myModel.getLayer(myName);
+    const myWeights = await myLayer.getWeights()[0].data();
+    const myBias = await myLayer.getWeights()[1].data();
+    myHeaderText += `const float ${myName}_weight[] = { ${Array.from(myWeights).map(v => v.toFixed(8) + 'f').join(', ')} };\n`;
+    myHeaderText += `const float ${myName}_bias[] = { ${Array.from(myBias).map(v => v.toFixed(8) + 'f').join(', ')} };\n\n`;
+  }
+  myHeaderText += "#endif";
+  const myBlob = new Blob([myHeaderText], { type: 'text/plain' });
+  const myLink = document.createElement('a');
+  myLink.href = URL.createObjectURL(myBlob);
+  myLink.download = myFileName;
+  myLink.click();
+}
+
+function myCollect(myID) {
+  const myFrame = tf.browser.fromPixels(document.getElementById('myVideo1')).resizeBilinear([64, 64]).div(255.0).expandDims(0);
+  if (Math.random() < 0.2) {
+    myValData[myID].push(myFrame);
+    if (myValData[myID].length > 10) myValData[myID].shift();
+  } else {
+    myTrainData[myID].push(myFrame);
+    if (myTrainData[myID].length > 15) myTrainData[myID].shift();
+  }
+}
+
+async function mySaveDisk() { await myModel.save('downloads://' + document.getElementById('myExportName').value); }
+
+async function myLoadDisk(myFileList) {
+  if (myFileList.length < 2) return alert('Select both .json and .bin files.');
+  let myFiles = Array.from(myFileList).sort((a,b) => a.name.endsWith('.json') ? -1 : 1);
+  myModel = await tf.loadLayersModel(tf.io.browserFiles(myFiles));
+  myModel.compile({optimizer: tf.train.adam(0.0005), loss: 'categoricalCrossentropy'});
+  myFeatureModel = tf.model({inputs: myModel.inputs, outputs: myModel.getLayer('myConv1').output});
+  alert('Brain & X-Ray Loaded!');
+}
+
+(async function myListCameras() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
+</script>
 
 </body>
