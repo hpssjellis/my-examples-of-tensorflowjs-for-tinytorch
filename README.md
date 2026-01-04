@@ -3,7 +3,9 @@
 
 This page as a web page index.
 
-https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/
+[hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/) <br>
+
+and as a github   [my-examples-of-tensorflowjs-for-tinytorch](https://github.com/hpssjellis/my-examples-of-tensorflowjs-for-tinytorch)  <br>
 
 
 
