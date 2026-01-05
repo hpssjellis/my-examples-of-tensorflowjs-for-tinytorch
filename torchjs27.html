@@ -2,11 +2,11 @@
 
 <body style="font-family: sans-serif; background-color: #fdfdfd;">
 
-<h2 align="center">Rocksetta Pro: Named Binary Optimizer</h2>
+<h2 align="center">Rocksetta Pro: Fast 20-Slot Optimizer</h2>
 
 <div style="font-size:14px; background-color:lightyellow; width:92%; border:2px solid blue; padding:15px; margin:auto; border-radius:10px;"> 
-<b>Hybrid Optimization:</b> Exports a <b>Single Binary Array</b> with <code>alignas(16)</code> for the ESP32-S3. 
-<br><b>Educational Tip:</b> Pruning is permanent. If you move the slider <b>left</b>, you must <b>TRAIN</b> more to regrow those connections.
+<b>Agile Learning:</b> We are back to a <b>20-frame buffer</b> for faster re-training. 
+<br><b>Important:</b> If you reduce pruning, you must train until the "Slot" count cycles to refresh the weights.
 </div><br>
 
 <div id="myCodeSpace"> 
@@ -26,12 +26,12 @@
       </div>
     </div>
 
-    <div style="flex: 1; min-width: 330px; border: 1px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
+    <div style="flex: 1; min-width: 330px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
       <b>2. Edge AI Optimization</b><hr>
       <b>Pruning Threshold:</b><br>
       <input type="range" id="myPruneSlider" min="0" max="95" value="10" style="width:80%" oninput="myPruneCheck()">
       <span id="myPruneVal">10</span>% Cut
-      <div id="myTrainReminder" style="color:red; font-size:11px; display:none; font-weight:bold; margin-top:5px;">⚠️ THRESHOLD LOWERED: MUST RE-TRAIN!</div>
+      <div id="myTrainReminder" style="color:red; font-size:11px; display:none; font-weight:bold; margin-top:5px;">⚠️ THRESHOLD LOWERED: RE-TRAIN SLOTS!</div>
       <br><br>
       <b>Quantization:</b> <b style="color:green;">Int8 (Professional)</b>
       <hr>
@@ -52,7 +52,9 @@
   <script>
     var myModel, myTimer, myLastID = -1;
     var myTrainData = {0:[], 1:[], 2:[]};
+    var myReplaceIndex = {0:0, 1:0, 2:0}; 
     var myPrevPrune = 10;
+    var myMaxBuffer = 20; // Back to 20 for faster response
 
     function myPruneCheck() {
       let myCurrent = document.getElementById('myPruneSlider').value;
@@ -76,7 +78,7 @@
         myModel.add(tf.layers.conv2d({inputShape:[64,64,3], kernelSize:3, filters:4, activation:'relu'}));
         myModel.add(tf.layers.flatten());
         myModel.add(tf.layers.dense({units:3, activation:'softmax'}));
-        myModel.compile({optimizer: 'adam', loss:'categoricalCrossentropy'});
+        myModel.compile({optimizer: tf.train.adam(0.005), loss:'categoricalCrossentropy'});
       }
       if (myTimer) clearInterval(myTimer);
       myTimer = setInterval(async () => {
@@ -96,7 +98,7 @@
         const myPred = myModel.predict(myInput);
         const myID = (await myPred.argMax(1).data())[0];
         const myLabel = document.getElementById('myLabel' + myID).value;
-        document.getElementById('myDiv1').innerHTML = `DETECTED: <b>${myLabel} (${myID})</b><br>Buffers: ${myTrainData[0].length}, ${myTrainData[1].length}, ${myTrainData[2].length}`;
+        document.getElementById('myDiv1').innerHTML = `DETECTED: <b>${myLabel}</b><br>Buffers: ${myTrainData[0].length}, ${myTrainData[1].length}, ${myTrainData[2].length}`;
         
         if (myID !== myLastID) {
           document.getElementById('myDivHistory').innerHTML = `[${new Date().toLocaleTimeString()}] -> ${myLabel}<br>` + document.getElementById('myDivHistory').innerHTML;
@@ -110,21 +112,18 @@
       const myThreshold = document.getElementById('myPruneSlider').value / 100;
       const myFileName = document.getElementById('myExportName').value + ".h";
       let myTotalBytes = [];
-      
       for (let myL of myModel.layers) {
         if (myL.getWeights().length > 0) {
           let myW = await myL.getWeights()[0].data();
+          // Int8 Quantization with Pruning
           const myBinary = Int8Array.from(myW, v => Math.abs(v) < myThreshold ? 0 : Math.round(v * 127));
           myTotalBytes.push(...new Uint8Array(myBinary.buffer));
         }
       }
-      
       let myHex = myTotalBytes.map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ');
       let myText = `#ifndef MY_MODEL_DATA_H\n#define MY_MODEL_DATA_H\n\n`;
-      myText += `// Labels: 0:${document.getElementById('myLabel0').value}, 1:${document.getElementById('myLabel1').value}, 2:${document.getElementById('myLabel2').value}\n\n`;
       myText += `alignas(16) const unsigned char myModelData[] = {\n  ${myHex}\n};\n\n`;
       myText += `const unsigned int myModelLen = ${myTotalBytes.length};\n\n#endif`;
-      
       const myLink = document.createElement('a');
       myLink.href = URL.createObjectURL(new Blob([myText]));
       myLink.download = myFileName;
@@ -134,12 +133,20 @@
     function myCollect(myID) {
       const myVideo = document.getElementById('myVideo1');
       const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
-      myTrainData[myID].push(myFrame);
-      if (myTrainData[myID].length > 20) myTrainData[myID].shift();
+      
+      let mySlot = myReplaceIndex[myID];
+      
+      if (myTrainData[myID].length < myMaxBuffer) {
+        myTrainData[myID].push(myFrame);
+      } else {
+        myTrainData[myID][mySlot].dispose(); 
+        myTrainData[myID][mySlot] = myFrame;
+      }
       
       const myName = document.getElementById('myLabel' + myID).value;
-      const myCount = myTrainData[myID].length;
-      document.getElementById('myDivHistory').innerHTML = `Added to ${myName} (Total: ${myCount})<br>` + document.getElementById('myDivHistory').innerHTML;
+      document.getElementById('myDivHistory').innerHTML = `Added to ${myName} (Slot: ${mySlot + 1} of ${myMaxBuffer})<br>` + document.getElementById('myDivHistory').innerHTML;
+      
+      myReplaceIndex[myID] = (mySlot + 1) % myMaxBuffer;
     }
   </script>
 </div>
@@ -149,7 +156,7 @@
 </div>
 
 <textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:15px; padding:10px; border-radius:10px;" onclick="myToggleEditor()">
-Click here to see the Professional Optimization source code...
+Click here to see the Source Code...
 </textarea>
 
 <script>
