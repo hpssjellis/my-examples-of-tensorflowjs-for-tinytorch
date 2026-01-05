@@ -71,7 +71,7 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 | [**torchjs24.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs24.html) | Performance Lab | Benchmarking Latency and FPS in real-time. | [**19.1** Benchmarking](https://mlsysbook.ai/tinytorch/modules/19_benchmarking_ABOUT.html) |
 | [**torchjs25.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs25.html) | The Memory Guard | Debugging GPU leaks with `.dispose()` logic. | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
  [**torchjs26.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs26.html) | Finale | Putting Vision all together | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
-
+ [**torchjs27.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs27.html) | Finale | Tiding up a few things, int8 Quantization, single blob C header file | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
 
 
 
