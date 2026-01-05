@@ -1,0 +1,151 @@
+#include "esp_camera.h"
+#include <math.h>
+
+// 1. IMPORT YOUR MODEL DATA
+// Make sure this file has: myConv1_w, myConv1_b, myOutput_w, myOutput_b
+#include "myModel.h" 
+
+// --- CAMERA PINS (XIAO ESP32S3) ---
+#define XCLK_GPIO_NUM  10
+#define SIOD_GPIO_NUM  40
+#define SIOC_GPIO_NUM  39
+#define Y9_GPIO_NUM    48
+#define Y8_GPIO_NUM    11
+#define Y7_GPIO_NUM    12
+#define Y6_GPIO_NUM    14
+#define Y5_GPIO_NUM    16
+#define Y4_GPIO_NUM    18
+#define Y3_GPIO_NUM    17
+#define Y2_GPIO_NUM    15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// Global buffers for inference
+// Since we are using Grayscale, we only need 1 value per pixel (64*64)
+float myInputBuffer[64 * 64]; 
+float myConvOutput[62 * 62 * 4]; // 4 filters
+
+// --- THE INFERENCE ENGINE ---
+
+void myRunConv2D() {
+    // Process 64x64 Grayscale -> 62x62 with 4 Filters
+    for (int f = 0; f < 4; f++) {
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pixelIdx = (y + ky) * 64 + (x + kx);
+                        // Header Weight Index: Filter * 3*3 kernel
+                        int weightIdx = (f * 9) + (ky * 3 + kx);
+                        sum += myInputBuffer[pixelIdx] * myConv1_w[weightIdx];
+                    }
+                }
+                sum += myConv1_b[f];
+                myConvOutput[(f * 3844) + (y * 62 + x)] = (sum > 0) ? sum : 0; // 3844 = 62*62
+            }
+        }
+    }
+}
+
+int myGetClassification() {
+    float myLogits[3] = {0, 0, 0};
+    int myFlattenSize = 62 * 62 * 4; // 15376
+
+    for (int i = 0; i < 3; i++) {
+        float sum = 0;
+        for (int j = 0; j < myFlattenSize; j++) {
+            // Using your re-labelled Output weights
+            sum += myConvOutput[j] * myOutput_w[i * myFlattenSize + j];
+        }
+        myLogits[i] = sum + myOutput_b[i];
+    }
+
+    int myWinner = 0;
+    if (myLogits[1] > myLogits[0]) myWinner = 1;
+    if (myLogits[2] > myLogits[myWinner]) myWinner = 2;
+    return myWinner;
+}
+
+// --- IMAGE PROCESSING ---
+
+void myProcessCameraImage(camera_fb_t *fb) {
+    // Convert JPEG to Grayscale directly
+    uint8_t *grayBuf = (uint8_t *)ps_malloc(fb->width * fb->height);
+    if (!fmt2gray(fb->buf, fb->len, fb->format, grayBuf)) {
+        Serial.println("Gray Conversion Failed");
+        free(grayBuf);
+        return;
+    }
+
+    // Resize 320x240 -> 64x64
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            int srcX = x * (fb->width / 64);
+            int srcY = y * (fb->height / 64);
+            myInputBuffer[y * 64 + x] = grayBuf[srcY * fb->width + srcX] / 255.0;
+        }
+    }
+    free(grayBuf);
+}
+
+void setup() {
+    Serial.begin(115200);
+    while(!Serial); // Wait for Serial Monitor
+    Serial.println("XIAO ESP32S3 Vision Test Starting...");
+
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1;
+    config.pin_reset = -1;
+    config.xclk_freq_hz = 20000000;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.pixel_format = PIXFORMAT_JPEG; 
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 1;
+
+    if (esp_camera_init(&config) != ESP_OK) {
+        Serial.println("Camera Init Failed!");
+        return;
+    }
+    Serial.println("Camera Ready! Point at something...");
+}
+
+void loop() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+
+    unsigned long startTime = millis();
+
+    myProcessCameraImage(fb);
+    esp_camera_fb_return(fb); // Release immediately
+
+    myRunConv2D();
+    int result = myGetClassification();
+
+    unsigned long duration = millis() - startTime;
+
+    Serial.print("Prediction: ");
+    Serial.print(result);
+    Serial.print("  |  Time: ");
+    Serial.print(duration);
+    Serial.println("ms");
+
+    delay(500); // Wait a bit so we can read the monitor
+}
