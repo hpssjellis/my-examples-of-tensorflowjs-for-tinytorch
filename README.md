@@ -5,7 +5,13 @@ This page as a web page index.
 
 [hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/) <br>
 
-and as a github   [my-examples-of-tensorflowjs-for-tinytorch](https://github.com/hpssjellis/my-examples-of-tensorflowjs-for-tinytorch)  <br>
+and the Github it is built at   [my-examples-of-tensorflowjs-for-tinytorch](https://github.com/hpssjellis/my-examples-of-tensorflowjs-for-tinytorch)  <br>
+
+This page supports the [mlsysbook.ai](https://mlsysbook.ai/)  and it's tinyTorch implementation at [mlsysbook.ai/tinytorch/intro.html](https://mlsysbook.ai/tinytorch/intro.html)  <br>
+
+This page is trying to simplify for High School students and non-engineering undergrads TinyTorch without needing to do any Python installation<br>
+
+It does not reach the same extent of total understanding of the system, but is a half way point between just using machine learning and TinyTorch understanding. <br> 
 
 
 
@@ -18,23 +24,30 @@ and as a github   [my-examples-of-tensorflowjs-for-tinytorch](https://github.com
 
 
 
-What We Have Made
-We have built a series of interactive web applications that allow students to learn Artificial Intelligence without installing any software. Each torchjs##.html file corresponds to a Python step, but adds visual feedback that only a browser can provide:
+
+
+## What We Have Made
+
+We have built a series of interactive web applications that allow students to learn Artificial Intelligence without installing any software. Each torchjs##.html file corresponds approximately to a tinyTorch Python step, but adds visual feedback that only a browser can easily provide:
 
 Live Visuals: Students can see their camera feed and the "Binary View" (what the AI sees) side-by-side.
 
 Instant Interaction: Buttons allow for manual data fetching, real-time training, and immediate weight exporting.
 
-No-Setup Training: By using the computer's GPU through the browser, students can train models on their own handwriting in seconds.
+No-Setup Training: By using the computer's GPU through the browser, students can train models on their own data in seconds. <br>
 
-How to Use It
+## How to Use It
+
 Open the File: Simply double-click any .html file to open it in Chrome, Edge, or any modern browser.
 
 Start the Hardware: Click the "Start Camera" button to grant the browser permission to see your webcam.
 
 Load or Train: Depending on the file, use the buttons to either fetch professional data from the internet or capture your own drawings.
 
-Export: Once the AI is performing well, use the "Export .h" button to save the "brain" as a C++ header file, ready to be flashed onto an ESP32-S3 microcontroller.
+Click the black textarea to see running code, copy it for your own work, change it, click the "Update and Run" button to live see your changes. 
+
+Export: Once the AI is performing well, use the "Export .h" button to save the "brain" as a C++ header file, ready to be flashed onto an ESP32-S3 microcontroller. (This part is still in draft mode)
+
 
 
 
