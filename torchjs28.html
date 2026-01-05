@@ -1,30 +1,131 @@
-// --- INT8 VERSION OF THE EXPORTER ---
-    async function myExportHeader() {
-      if(!myModel) { alert("Start the brain first!"); return; }
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rocksetta Pro: Unified Optimizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+</head>
+<body style="font-family: sans-serif; background-color: #fdfdfd; padding: 20px;">
+
+<h2 align="center">Rocksetta Pro: Unified 240x240 Optimizer</h2>
+
+<div style="font-size:14px; background-color:lightyellow; width:92%; border:2px solid blue; padding:15px; margin:auto; border-radius:10px; margin-bottom: 20px;"> 
+    <b>Mode Switcher:</b> Use the checkbox below to switch between 32-bit Floats (High Accuracy) or 8-bit Integers (Small & Fast).
+</div>
+
+<div id="myCodeSpace"> 
+  <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
+    
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <select id="myCameraSelect" style="width: 100%; margin-bottom: 5px; padding: 5px;"></select>
+      <div align="center">
+          <video id="myVideo1" width="240" height="240" autoplay playsinline style="border: 2px solid black; background: #000; border-radius: 5px;"></video>
+      </div>
+      <br>
+      <input type="button" value="1. Start Camera & Brain" onclick="myStartAll()" style="width:100%; font-weight:bold; padding:12px; background:#e1f5fe; border-radius: 5px; cursor:pointer;">
+      <hr>
+      <div style="display: flex; justify-content: space-between;">
+          <input type="button" value="Save TFJS" onclick="mySaveModel()" style="width:48%; padding: 8px;">
+          <input type="button" value="Load TFJS" onclick="myLoadModel()" style="width:48%; padding: 8px;">
+      </div>
+      <hr>
+      <b>Training:</b><br>
+      <div style="display: flex; justify-content: space-between; margin-top:5px; text-align:center;">
+        <div><input type="button" value="Train 0" onclick="myCollect(0)"><br><input type="text" id="myLabel0" value="Class 0" size="8"></div>
+        <div><input type="button" value="Train 1" onclick="myCollect(1)"><br><input type="text" id="myLabel1" value="Class 1" size="8"></div>
+        <div><input type="button" value="Train 2" onclick="myCollect(2)"><br><input type="text" id="myLabel2" value="Class 2" size="8"></div>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
+      <b>2. Edge AI Export Settings</b><hr>
       
-      let myText = `// INT8 Quantized Model\n`;
-      myText += `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+      <label style="font-weight: bold; color: darkgreen; cursor: pointer;">
+        <input type="checkbox" id="myInt8Toggle"> Use Int8 Quantization (Smaller/Faster)
+      </label>
+      <p style="font-size: 12px; color: #555;"><i>Note: Int8 requires a Scale factor in your C++ code.</i></p>
+
+      <b>Export Name:</b><br>
+      <input type="text" id="myExportName" value="myModel" style="width:70%; padding: 5px;"> .h
+      <br><br>
+      <input type="button" value="GENERATE C-HEADER" style="background-color:#4CAF50; color:white; width:100%; padding:15px; font-weight:bold; border: none; border-radius: 5px; cursor:pointer;" onclick="myExportHeader()">
+      <hr>
+      <div id="myDiv1" style="border: 1px solid green; padding: 10px; font-family: monospace; background: white; min-height: 50px;">Ready...</div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <b>3. Activity Logs</b><hr>
+      <div id="myDivHistory" style="border: 1px solid blue; padding: 8px; height: 300px; overflow-y: scroll; font-family: monospace; font-size: 0.85em; background: #f1f8ff;">Logs...</div>
+    </div>
+  </div>
+
+  <script>
+    var myModel, myTimer, myLastID = -1;
+    var myTrainData = {0:[], 1:[], 2:[]};
+    var myReplaceIndex = {0:0, 1:0, 2:0}; 
+    var myMaxBuffer = 20;
+
+    async function myStartAll() {
+      const myVideo = document.getElementById('myVideo1');
+      if (!myVideo.srcObject) {
+        const myDeviceId = document.getElementById('myCameraSelect').value;
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({video: { width: 240, height: 240, deviceId: myDeviceId ? { exact: myDeviceId } : undefined }});
+      }
+      
+      if (!myModel) {
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({inputShape:[64,64,3], kernelSize:3, filters:4, activation:'relu', padding:'valid'}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dense({units:3, activation:'softmax'}));
+        myModel.compile({optimizer: tf.train.adam(0.005), loss:'categoricalCrossentropy'});
+        document.getElementById('myDivHistory').innerHTML = "Brain Ready!<br>" + document.getElementById('myDivHistory').innerHTML;
+      }
+
+      if (myTimer) clearInterval(myTimer);
+      myTimer = setInterval(async () => {
+        const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
+        
+        if (myTrainData[0].length > 0 && myTrainData[1].length > 0 && myTrainData[2].length > 0) {
+          const myBatch = tf.concat([
+            myTrainData[0][Math.floor(Math.random()*myTrainData[0].length)],
+            myTrainData[1][Math.floor(Math.random()*myTrainData[1].length)],
+            myTrainData[2][Math.floor(Math.random()*myTrainData[2].length)]
+          ]);
+          await myModel.trainOnBatch(myBatch, tf.tensor2d([[1,0,0],[0,1,0],[0,0,1]]));
+          myBatch.dispose();
+        }
+
+        const myPred = myModel.predict(myInput);
+        const myID = (await myPred.argMax(1).data())[0];
+        document.getElementById('myDiv1').innerHTML = `DETECTED: <b>${document.getElementById('myLabel'+myID).value}</b>`;
+        myInput.dispose(); myPred.dispose();
+      }, 150);
+    }
+
+    async function myExportHeader() {
+      if(!myModel) return;
+      const isInt8 = document.getElementById('myInt8Toggle').checked;
+      let myText = `// Model: ${isInt8 ? "Int8 Quantized" : "Float32 High-Precision"}\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
       
       const myNames = ["myConv1_w", "myConv1_b", "myOutput_w", "myOutput_b"];
       let myNameIndex = 0;
 
       for (let i = 0; i < myModel.layers.length; i++) {
           const myWeights = myModel.layers[i].getWeights();
-          
           for (let j = 0; j < myWeights.length; j++) {
               let myData = await myWeights[j].data();
+              let type = isInt8 ? "int8_t" : "float";
               
-              // Find the strongest value to calculate a custom scale
-              const myMax = Math.max(...Array.from(myData).map(Math.abs));
-              const myScale = 127.0 / (myMax || 1); // Avoid divide by zero
-
-              myText += `// Scale: ${myScale.toFixed(6)}\n`;
-              myText += `const int8_t ${myNames[myNameIndex]}[] = {\n  `;
-              
-              // Convert to Int8 using the Scale
-              myText += Array.from(myData).map(v => Math.round(v * myScale)).join(', ');
-              myText += `\n};\n\n`;
-              
+              if (isInt8) {
+                  const myMax = Math.max(...Array.from(myData).map(Math.abs));
+                  const myScale = 127.0 / (myMax || 1);
+                  myText += `// Scale: ${myScale.toFixed(6)}\n`;
+                  myText += `const ${type} ${myNames[myNameIndex]}[] = { `;
+                  myText += Array.from(myData).map(v => Math.round(v * myScale)).join(', ');
+              } else {
+                  myText += `const ${type} ${myNames[myNameIndex]}[] = { `;
+                  myText += Array.from(myData).map(v => v.toFixed(6)).join(', ');
+              }
+              myText += ` };\n\n`;
               myNameIndex++;
           }
       }
@@ -35,3 +136,25 @@
       myLink.download = document.getElementById('myExportName').value + ".h";
       myLink.click();
     }
+
+    // Other helper functions (Collect, Save, Load) remain same...
+    function myCollect(myID) {
+      const myVideo = document.getElementById('myVideo1');
+      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
+      let mySlot = myReplaceIndex[myID];
+      if (myTrainData[myID].length < myMaxBuffer) { myTrainData[myID].push(myFrame); } 
+      else { myTrainData[myID][mySlot].dispose(); myTrainData[myID][mySlot] = myFrame; }
+      myReplaceIndex[myID] = (mySlot + 1) % myMaxBuffer;
+      document.getElementById('myDivHistory').innerHTML = `Trained ${document.getElementById('myLabel'+myID).value}<br>` + document.getElementById('myDivHistory').innerHTML;
+    }
+
+    async function mySaveModel() { await myModel.save('downloads://my-tfjs-model'); }
+    async function myLoadModel() {
+        const myU = document.createElement('input'); myU.type = 'file'; myU.multiple = true;
+        myU.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); };
+        myU.click();
+    }
+  </script>
+</div>
+</body>
+</html>
