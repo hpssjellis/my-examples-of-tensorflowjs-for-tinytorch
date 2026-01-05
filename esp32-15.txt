@@ -1,60 +1,144 @@
 #include "esp_camera.h"
 #include "img_converters.h"
-#include "myModel.h"
+#include <math.h>
+#include "myModel.h" // This file contains your exported weights
 
-// Logic Switcher: Automatically adjusts based on your .h file
+// --- PIN DEFINITIONS (XIAO ESP32S3 SENSE) ---
+#define XCLK_GPIO_NUM  10
+#define SIOD_GPIO_NUM  40
+#define SIOC_GPIO_NUM  39
+#define Y9_GPIO_NUM    48
+#define Y8_GPIO_NUM    11
+#define Y7_GPIO_NUM    12
+#define Y6_GPIO_NUM    14
+#define Y5_GPIO_NUM    16
+#define Y4_GPIO_NUM    18
+#define Y3_GPIO_NUM    17
+#define Y2_GPIO_NUM    15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// Global Buffers
+float myInputBuffer[64 * 64 * 3];  // Pre-processed image
+float myConvOutput[62 * 62 * 4];   // Output of the Conv2D layer
+
+// --- UNIVERSAL WEIGHT GETTER ---
+// This macro checks if we are in Int8 mode. 
+// If yes, it divides the integer by the scale. If no, it uses the float directly.
 #ifdef USE_INT8_MODE
-  #define WEIGHT_TYPE int8_t
-  // Helper to convert int8 back to float during math
   #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
 #else
-  #define WEIGHT_TYPE float
   #define GET_W(arr, idx, scale) (arr[idx])
+  // Create dummy scales for Float mode so the code compiles
+  float myConv1_w_scale=1, myConv1_b_scale=1, myOutput_w_scale=1, myOutput_b_scale=1;
 #endif
 
-float myInputBuffer[64 * 64 * 3]; 
-float myConvOutput[62 * 62 * 4];
-
+// --- AI CORE: CONVOLUTION LAYER ---
 void myRunConv2D() {
     for (int f = 0; f < 4; f++) {
-        int outputBase = f * 3844;
+        int outBase = f * 3844; // 62 * 62
         for (int y = 0; y < 62; y++) {
             for (int x = 0; x < 62; x++) {
                 float sum = 0;
                 for (int ky = 0; ky < 3; ky++) {
-                    int pixelRow = (y + ky) * 64;
-                    int weightRow = (f * 27) + (ky * 9);
+                    int pRow = (y + ky) * 64;
+                    int wRow = (f * 27) + (ky * 9);
                     for (int kx = 0; kx < 3; kx++) {
-                        int pIdx = (pixelRow + (x + kx)) * 3;
-                        int wIdx = weightRow + (kx * 3);
-                        
-                        // Automatically handles Float or Int8 Scaling
-                        sum += myInputBuffer[pIdx]     * GET_W(myConv1_w, wIdx, myConv1_w_scale);
+                        int pIdx = (pRow + (x + kx)) * 3;
+                        int wIdx = wRow + (kx * 3);
+                        sum += myInputBuffer[pIdx]     * GET_W(myConv1_w, wIdx,     myConv1_w_scale);
                         sum += myInputBuffer[pIdx + 1] * GET_W(myConv1_w, wIdx + 1, myConv1_w_scale);
                         sum += myInputBuffer[pIdx + 2] * GET_W(myConv1_w, wIdx + 2, myConv1_w_scale);
                     }
                 }
                 sum += GET_W(myConv1_b, f, myConv1_b_scale);
-                myConvOutput[outputBase + (y * 62 + x)] = (sum > 0) ? sum : 0;
+                myConvOutput[outBase + (y * 62 + x)] = (sum > 0) ? sum : 0; // ReLU
             }
         }
     }
 }
 
+// --- AI CORE: DENSE OUTPUT LAYER ---
 int myGetClassification() {
     float myLogits[3] = {0, 0, 0};
     int myFlattenSize = 15376; 
     for (int i = 0; i < 3; i++) {
         float sum = 0;
-        int weightOffset = i * myFlattenSize;
+        int wOffset = i * myFlattenSize;
         for (int j = 0; j < myFlattenSize; j++) {
-            sum += myConvOutput[j] * GET_W(myOutput_w, weightOffset + j, myOutput_w_scale);
+            sum += myConvOutput[j] * GET_W(myOutput_w, wOffset + j, myOutput_w_scale);
         }
         myLogits[i] = sum + GET_W(myOutput_b, i, myOutput_b_scale);
     }
-    int winner = (myLogits[1] > myLogits[0]) ? 1 : 0;
-    if (myLogits[2] > myLogits[winner]) winner = 2;
-    return winner;
+    // Simple ArgMax (Winner takes all)
+    int win = (myLogits[1] > myLogits[0]) ? 1 : 0;
+    if (myLogits[2] > myLogits[win]) win = 2;
+    return win;
 }
 
-// ... Camera setup and loop remain the same ...
+// --- IMAGE PROCESSING: 240x240 -> 64x64 ---
+void myProcessImage(camera_fb_t *fb) {
+    uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgb) return;
+    fmt2rgb888(fb->buf, fb->len, fb->format, rgb);
+
+    float inv255 = 1.0f / 255.0f;
+    for (int y = 0; y < 64; y++) {
+        int srcY = y * (fb->height / 64);
+        for (int x = 0; x < 64; x++) {
+            int srcX = x * (fb->width / 64);
+            int sIdx = (srcY * fb->width + srcX) * 3;
+            int dIdx = (y * 64 + x) * 3;
+            myInputBuffer[dIdx]     = rgb[sIdx]     * inv255;
+            myInputBuffer[dIdx + 1] = rgb[sIdx + 1] * inv255;
+            myInputBuffer[dIdx + 2] = rgb[sIdx + 2] * inv255;
+        }
+    }
+    free(rgb);
+}
+
+void setup() {
+    Serial.begin(115200);
+    
+    #ifdef USE_INT8_MODE
+      Serial.println("SYSTEM: INT8 COMPRESSION ACTIVE");
+    #else
+      Serial.println("SYSTEM: FLOAT32 PRECISION ACTIVE");
+    #endif
+
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM; config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM; config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM; config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM; config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM; config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM; config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM; config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1; config.pin_reset = -1;
+    config.xclk_freq_hz = 20000000;
+    config.frame_size = FRAMESIZE_240X240; 
+    config.pixel_format = PIXFORMAT_JPEG; 
+    config.grab_mode = CAMERA_GRAB_LATEST;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 2;
+    config.jpeg_quality = 10;
+
+    if (esp_camera_init(&config) != ESP_OK) { Serial.println("Camera Error"); return; }
+}
+
+void loop() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+    myProcessImage(fb);
+    esp_camera_fb_return(fb); 
+
+    myRunConv2D();
+    int result = myGetClassification();
+
+    Serial.print("Prediction: Class ");
+    Serial.println(result);
+    delay(100);
+}
