@@ -73,7 +73,7 @@ int myGetClassification() {
 void myProcessCameraImage(camera_fb_t *fb) {
     // Convert JPEG to Grayscale directly
     uint8_t *grayBuf = (uint8_t *)ps_malloc(fb->width * fb->height);
-    if (!fmt2gray(fb->buf, fb->len, fb->format, grayBuf)) {
+    if (!fmt2grayscale(fb->buf, fb->len, fb->format, grayBuf)) {
         Serial.println("Gray Conversion Failed");
         free(grayBuf);
         return;
