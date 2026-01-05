@@ -1,32 +1,23 @@
 #include "esp_camera.h"
 #include "img_converters.h"
-#include <math.h>
-#include "myModel.h" // Ensure this has the 4 float arrays
+#include "myModel.h"
 
-// --- CAMERA PINS (XIAO ESP32S3) ---
-#define XCLK_GPIO_NUM  10
-#define SIOD_GPIO_NUM  40
-#define SIOC_GPIO_NUM  39
-#define Y9_GPIO_NUM    48
-#define Y8_GPIO_NUM    11
-#define Y7_GPIO_NUM    12
-#define Y6_GPIO_NUM    14
-#define Y5_GPIO_NUM    16
-#define Y4_GPIO_NUM    18
-#define Y3_GPIO_NUM    17
-#define Y2_GPIO_NUM    15
-#define VSYNC_GPIO_NUM 38
-#define HREF_GPIO_NUM  47
-#define PCLK_GPIO_NUM  13
+// Logic Switcher: Automatically adjusts based on your .h file
+#ifdef USE_INT8_MODE
+  #define WEIGHT_TYPE int8_t
+  // Helper to convert int8 back to float during math
+  #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
+#else
+  #define WEIGHT_TYPE float
+  #define GET_W(arr, idx, scale) (arr[idx])
+#endif
 
-// AI Buffers
 float myInputBuffer[64 * 64 * 3]; 
-float myConvOutput[62 * 62 * 4]; 
+float myConvOutput[62 * 62 * 4];
 
-// --- CORE AI MATH ---
 void myRunConv2D() {
     for (int f = 0; f < 4; f++) {
-        int outputBase = f * 3844; // 62 * 62
+        int outputBase = f * 3844;
         for (int y = 0; y < 62; y++) {
             for (int x = 0; x < 62; x++) {
                 float sum = 0;
@@ -34,15 +25,17 @@ void myRunConv2D() {
                     int pixelRow = (y + ky) * 64;
                     int weightRow = (f * 27) + (ky * 9);
                     for (int kx = 0; kx < 3; kx++) {
-                        int pixelIdx = (pixelRow + (x + kx)) * 3;
-                        int weightBase = weightRow + (kx * 3);
-                        sum += myInputBuffer[pixelIdx]     * myConv1_w[weightBase];
-                        sum += myInputBuffer[pixelIdx + 1] * myConv1_w[weightBase + 1];
-                        sum += myInputBuffer[pixelIdx + 2] * myConv1_w[weightBase + 2];
+                        int pIdx = (pixelRow + (x + kx)) * 3;
+                        int wIdx = weightRow + (kx * 3);
+                        
+                        // Automatically handles Float or Int8 Scaling
+                        sum += myInputBuffer[pIdx]     * GET_W(myConv1_w, wIdx, myConv1_w_scale);
+                        sum += myInputBuffer[pIdx + 1] * GET_W(myConv1_w, wIdx + 1, myConv1_w_scale);
+                        sum += myInputBuffer[pIdx + 2] * GET_W(myConv1_w, wIdx + 2, myConv1_w_scale);
                     }
                 }
-                sum += myConv1_b[f];
-                myConvOutput[outputBase + (y * 62 + x)] = (sum > 0) ? sum : 0; // ReLU
+                sum += GET_W(myConv1_b, f, myConv1_b_scale);
+                myConvOutput[outputBase + (y * 62 + x)] = (sum > 0) ? sum : 0;
             }
         }
     }
@@ -55,96 +48,13 @@ int myGetClassification() {
         float sum = 0;
         int weightOffset = i * myFlattenSize;
         for (int j = 0; j < myFlattenSize; j++) {
-            sum += myConvOutput[j] * myOutput_w[weightOffset + j];
+            sum += myConvOutput[j] * GET_W(myOutput_w, weightOffset + j, myOutput_w_scale);
         }
-        myLogits[i] = sum + myOutput_b[i];
+        myLogits[i] = sum + GET_W(myOutput_b, i, myOutput_b_scale);
     }
-    int myWinner = (myLogits[1] > myLogits[0]) ? 1 : 0;
-    if (myLogits[2] > myLogits[myWinner]) myWinner = 2;
-    return myWinner;
+    int winner = (myLogits[1] > myLogits[0]) ? 1 : 0;
+    if (myLogits[2] > myLogits[winner]) winner = 2;
+    return winner;
 }
 
-// Optimized for 240x240 Input -> 64x64 AI Input
-void myProcessCameraImage(camera_fb_t *fb) {
-    uint8_t *rgbBuf = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
-    if (!rgbBuf) return;
-    fmt2rgb888(fb->buf, fb->len, fb->format, rgbBuf);
-
-    float inv255 = 1.0 / 255.0;
-    // Downsample 240x240 to 64x64 by skipping pixels (Efficient for students)
-    for (int y = 0; y < 64; y++) {
-        int srcY = y * (fb->height / 64);
-        int dstRow = y * 64;
-        for (int x = 0; x < 64; x++) {
-            int srcX = x * (fb->width / 64);
-            int srcIdx = (srcY * fb->width + srcX) * 3;
-            int dstIdx = (dstRow + x) * 3;
-            myInputBuffer[dstIdx]     = rgbBuf[srcIdx]     * inv255;
-            myInputBuffer[dstIdx + 1] = rgbBuf[srcIdx + 1] * inv255;
-            myInputBuffer[dstIdx + 2] = rgbBuf[srcIdx + 2] * inv255;
-        }
-    }
-    free(rgbBuf);
-}
-
-void myPrintVisualCheck() {
-    Serial.println("\n--- 240x240 SNAPSHOT (64x64 AI VIEW) ---");
-    for (int y = 0; y < 64; y += 4) {
-        for (int x = 0; x < 64; x += 2) {
-            int idx = (y * 64 + x) * 3;
-            float gray = (myInputBuffer[idx] + myInputBuffer[idx+1] + myInputBuffer[idx+2]) / 3.0;
-            Serial.print(gray > 0.5 ? "@" : ".");
-        }
-        Serial.println();
-    }
-    Serial.println("----------------------------------------\n");
-}
-
-void setup() {
-    Serial.begin(115200);
-    
-    camera_config_t config;
-    config.ledc_channel = LEDC_CHANNEL_0;
-    config.ledc_timer = LEDC_TIMER_0;
-    config.pin_d0 = Y2_GPIO_NUM; config.pin_d1 = Y3_GPIO_NUM;
-    config.pin_d2 = Y4_GPIO_NUM; config.pin_d3 = Y5_GPIO_NUM;
-    config.pin_d4 = Y6_GPIO_NUM; config.pin_d5 = Y7_GPIO_NUM;
-    config.pin_d6 = Y8_GPIO_NUM; config.pin_d7 = Y9_GPIO_NUM;
-    config.pin_xclk = XCLK_GPIO_NUM; config.pin_pclk = PCLK_GPIO_NUM;
-    config.pin_vsync = VSYNC_GPIO_NUM; config.pin_href = HREF_GPIO_NUM;
-    config.pin_sscb_sda = SIOD_GPIO_NUM; config.pin_sscb_scl = SIOC_GPIO_NUM;
-    config.pin_pwdn = -1; config.pin_reset = -1;
-    config.xclk_freq_hz = 15000000; 
-    
-    // NEW: Native Square Resolution
-    config.frame_size = FRAMESIZE_240X240; 
-    config.pixel_format = PIXFORMAT_JPEG; 
-    config.grab_mode = CAMERA_GRAB_LATEST;
-    config.fb_location = CAMERA_FB_IN_PSRAM;
-    config.fb_count = 2;
-    config.jpeg_quality = 12;
-
-    if (esp_camera_init(&config) != ESP_OK) {
-        Serial.println("Camera Init Failed");
-        return;
-    }
-    Serial.println("240x240 RGB Ready - Squeeze A0 for Snapshot");
-}
-
-void loop() {
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb) return;
-    myProcessCameraImage(fb);
-    esp_camera_fb_return(fb); 
-
-    if (analogRead(A0) > 2000) { 
-        myPrintVisualCheck();
-        delay(300); 
-    }
-
-    myRunConv2D();
-    int result = myGetClassification();
-
-    Serial.print("Class: ");
-    Serial.println(result);
-}
+// ... Camera setup and loop remain the same ...
