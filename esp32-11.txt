@@ -1,0 +1,159 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include <math.h>
+
+// 1. IMPORT YOUR MODEL DATA
+#include "myModel.h" 
+
+// --- CAMERA PINS (XIAO ESP32S3) ---
+#define XCLK_GPIO_NUM  10
+#define SIOD_GPIO_NUM  40
+#define SIOC_GPIO_NUM  39
+#define Y9_GPIO_NUM    48
+#define Y8_GPIO_NUM    11
+#define Y7_GPIO_NUM    12
+#define Y6_GPIO_NUM    14
+#define Y5_GPIO_NUM    16
+#define Y4_GPIO_NUM    18
+#define Y3_GPIO_NUM    17
+#define Y2_GPIO_NUM    15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// Global buffers for inference
+// 64*64*3 for RGB Color
+float myInputBuffer[64 * 64 * 3]; 
+float myConvOutput[62 * 62 * 4]; 
+
+// --- THE INFERENCE ENGINE ---
+
+void myRunConv2D() {
+    // Process 64x64 RGB -> 62x62 with 4 Filters
+    for (int f = 0; f < 4; f++) {
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+                // 3x3 Kernel
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pixelIdx = ((y + ky) * 64 + (x + kx)) * 3;
+                        // Weight index for 3-channel (RGB) input
+                        // f=filter, k=kernel position, c=color channel
+                        int weightBase = (f * 3 * 3 * 3) + (ky * 3 + kx) * 3;
+                        
+                        sum += myInputBuffer[pixelIdx]     * myConv1_w[weightBase];     // Red
+                        sum += myInputBuffer[pixelIdx + 1] * myConv1_w[weightBase + 1]; // Green
+                        sum += myInputBuffer[pixelIdx + 2] * myConv1_w[weightBase + 2]; // Blue
+                    }
+                }
+                sum += myConv1_b[f];
+                myConvOutput[(f * 3844) + (y * 62 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+int myGetClassification() {
+    float myLogits[3] = {0, 0, 0};
+    int myFlattenSize = 62 * 62 * 4; 
+
+    for (int i = 0; i < 3; i++) {
+        float sum = 0;
+        for (int j = 0; j < myFlattenSize; j++) {
+            sum += myConvOutput[j] * myOutput_w[i * myFlattenSize + j];
+        }
+        myLogits[i] = sum + myOutput_b[i];
+    }
+
+    int myWinner = 0;
+    if (myLogits[1] > myLogits[0]) myWinner = 1;
+    if (myLogits[2] > myLogits[myWinner]) myWinner = 2;
+    return myWinner;
+}
+
+// --- IMAGE PROCESSING ---
+
+void myProcessCameraImage(camera_fb_t *fb) {
+    // Allocate RGB buffer for the full image
+    uint8_t *rgbBuf = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgbBuf) return;
+
+    // Convert JPEG to RGB888
+    if (!fmt2rgb888(fb->buf, fb->len, fb->format, rgbBuf)) {
+        Serial.println("RGB Conversion Failed");
+        free(rgbBuf);
+        return;
+    }
+
+    // Downsample 320x240 to 64x64 and normalize
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            int srcX = x * (fb->width / 64);
+            int srcY = y * (fb->height / 64);
+            int srcIdx = (srcY * fb->width + srcX) * 3;
+            int dstIdx = (y * 64 + x) * 3;
+            
+            myInputBuffer[dstIdx]     = rgbBuf[srcIdx]     / 255.0; // R
+            myInputBuffer[dstIdx + 1] = rgbBuf[srcIdx + 1] / 255.0; // G
+            myInputBuffer[dstIdx + 2] = rgbBuf[srcIdx + 2] / 255.0; // B
+        }
+    }
+    free(rgbBuf);
+}
+
+void setup() {
+    Serial.begin(115200);
+    while(!Serial); 
+    
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1;
+    config.pin_reset = -1;
+    config.xclk_freq_hz = 20000000;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.pixel_format = PIXFORMAT_JPEG; 
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 1;
+
+    if (esp_camera_init(&config) != ESP_OK) {
+        Serial.println("Camera Init Failed");
+        return;
+    }
+    Serial.println("Color Vision System Online!");
+}
+
+void loop() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+
+    unsigned long start = millis();
+    myProcessCameraImage(fb);
+    esp_camera_fb_return(fb); 
+
+    myRunConv2D();
+    int result = myGetClassification();
+
+    Serial.print("Prediction: ");
+    Serial.print(result);
+    Serial.print("  |  Scan Time: ");
+    Serial.print(millis() - start);
+    Serial.println("ms");
+
+    delay(300); 
+}
