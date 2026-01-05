@@ -1,0 +1,186 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include <math.h>
+
+// 1. IMPORT YOUR MODEL DATA
+#include "myModel.h" 
+
+// --- CAMERA PINS (XIAO ESP32S3) ---
+#define XCLK_GPIO_NUM  10
+#define SIOD_GPIO_NUM  40
+#define SIOC_GPIO_NUM  39
+#define Y9_GPIO_NUM    48
+#define Y8_GPIO_NUM    11
+#define Y7_GPIO_NUM    12
+#define Y6_GPIO_NUM    14
+#define Y5_GPIO_NUM    16
+#define Y4_GPIO_NUM    18
+#define Y3_GPIO_NUM    17
+#define Y2_GPIO_NUM    15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// Global buffers for inference
+float myInputBuffer[64 * 64 * 3]; 
+float myConvOutput[62 * 62 * 4]; 
+
+// --- THE INFERENCE ENGINE ---
+
+void myRunConv2D() {
+    for (int f = 0; f < 4; f++) {
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pixelIdx = ((y + ky) * 64 + (x + kx)) * 3;
+                        int weightBase = (f * 27) + (ky * 9) + (kx * 3);
+                        sum += myInputBuffer[pixelIdx]     * myConv1_w[weightBase];
+                        sum += myInputBuffer[pixelIdx + 1] * myConv1_w[weightBase + 1];
+                        sum += myInputBuffer[pixelIdx + 2] * myConv1_w[weightBase + 2];
+                    }
+                }
+                sum += myConv1_b[f];
+                myConvOutput[(f * 3844) + (y * 62 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+int myGetClassification() {
+    float myLogits[3] = {0, 0, 0};
+    int myFlattenSize = 62 * 62 * 4; 
+    for (int i = 0; i < 3; i++) {
+        float sum = 0;
+        for (int j = 0; j < myFlattenSize; j++) {
+            sum += myConvOutput[j] * myOutput_w[i * myFlattenSize + j];
+        }
+        myLogits[i] = sum + myOutput_b[i];
+    }
+    int myWinner = 0;
+    if (myLogits[1] > myLogits[0]) myWinner = 1;
+    if (myLogits[2] > myLogits[myWinner]) myWinner = 2;
+    return myWinner;
+}
+
+// --- IMAGE PROCESSING ---
+
+void myProcessCameraImage(camera_fb_t *fb) {
+    uint8_t *rgbBuf = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgbBuf) return;
+
+    if (!fmt2rgb888(fb->buf, fb->len, fb->format, rgbBuf)) {
+        free(rgbBuf);
+        return;
+    }
+
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            int srcX = x * (fb->width / 64);
+            int srcY = y * (fb->height / 64);
+            int srcIdx = (srcY * fb->width + srcX) * 3;
+            int dstIdx = (y * 64 + x) * 3;
+            myInputBuffer[dstIdx]     = rgbBuf[srcIdx]     / 255.0;
+            myInputBuffer[dstIdx + 1] = rgbBuf[srcIdx + 1] / 255.0;
+            myInputBuffer[dstIdx + 2] = rgbBuf[srcIdx + 2] / 255.0;
+        }
+    }
+    free(rgbBuf);
+}
+
+// Visual Debug: Prints a tiny version of what the AI sees to Serial
+void myPrintVisualCheck() {
+    Serial.println("\n--- CAMERA VIEW (64x64 scaled) ---");
+    for (int y = 0; y < 64; y += 4) { // Jump by 4 to keep it small
+        for (int x = 0; x < 64; x += 2) {
+            int idx = (y * 64 + x) * 3;
+            float gray = (myInputBuffer[idx] + myInputBuffer[idx+1] + myInputBuffer[idx+2]) / 3.0;
+            if (gray > 0.8) Serial.print("@");
+            else if (gray > 0.5) Serial.print("#");
+            else if (gray > 0.2) Serial.print(".");
+            else Serial.print(" ");
+        }
+        Serial.println();
+    }
+    Serial.println("----------------------------------\n");
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(A0, INPUT); // Initialize trigger pin
+    while(!Serial); 
+
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1;
+    config.pin_reset = -1;
+    config.xclk_freq_hz = 10000000;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.pixel_format = PIXFORMAT_JPEG; 
+    config.grab_mode = CAMERA_GRAB_LATEST;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 2;
+    config.jpeg_quality = 12;
+
+    if (esp_camera_init(&config) != ESP_OK) {
+        Serial.println("Camera Init Failed");
+        return;
+    }
+
+    sensor_t * s = esp_camera_sensor_get();
+    s->set_brightness(s, 1);
+    s->set_contrast(s, 1);
+    
+    Serial.println("System Ready. Set A0 to HIGH to analyze...");
+}
+
+void loop() {
+    // Check if A0 is triggered
+    if (analogRead(A0) > 1000) {
+        
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) {
+            Serial.println("Camera capture failed");
+            return;
+        }
+
+        unsigned long start = millis();
+
+        myProcessCameraImage(fb);
+        esp_camera_fb_return(fb); 
+
+        // 1. Show us what you see
+        myPrintVisualCheck();
+
+        // 2. Do the math
+        myRunConv2D();
+        int result = myGetClassification();
+
+        // 3. Report
+        unsigned long processTime = millis() - start;
+        Serial.print("RESULT: Class ");
+        Serial.println(result);
+        Serial.print("Time: ");
+        Serial.print(processTime);
+        Serial.println("ms");
+        Serial.println("----------------------------------");
+
+        delay(1000); // Wait so it doesn't repeat too fast
+    }
+}
