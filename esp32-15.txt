@@ -1,9 +1,9 @@
 #include "esp_camera.h"
 #include "img_converters.h"
 #include <math.h>
-#include "myModel.h" // This file contains your exported weights
+#include "myModel.h" 
 
-// --- PIN DEFINITIONS (XIAO ESP32S3 SENSE) ---
+// --- CAMERA PINS (XIAO ESP32S3) ---
 #define XCLK_GPIO_NUM  10
 #define SIOD_GPIO_NUM  40
 #define SIOC_GPIO_NUM  39
@@ -19,25 +19,23 @@
 #define HREF_GPIO_NUM  47
 #define PCLK_GPIO_NUM  13
 
-// Global Buffers
-float myInputBuffer[64 * 64 * 3];  // Pre-processed image
-float myConvOutput[62 * 62 * 4];   // Output of the Conv2D layer
+// AI Buffers
+float myInputBuffer[64 * 64 * 3]; 
+float myConvOutput[62 * 62 * 4]; 
 
-// --- UNIVERSAL WEIGHT GETTER ---
-// This macro checks if we are in Int8 mode. 
-// If yes, it divides the integer by the scale. If no, it uses the float directly.
+// --- UNIVERSAL BRAIN MACRO ---
+// Handles both Float and Int8 modes automatically
 #ifdef USE_INT8_MODE
   #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
 #else
   #define GET_W(arr, idx, scale) (arr[idx])
-  // Create dummy scales for Float mode so the code compiles
+  // Fallbacks to prevent compilation errors if not in Int8 mode
   float myConv1_w_scale=1, myConv1_b_scale=1, myOutput_w_scale=1, myOutput_b_scale=1;
 #endif
 
-// --- AI CORE: CONVOLUTION LAYER ---
 void myRunConv2D() {
     for (int f = 0; f < 4; f++) {
-        int outBase = f * 3844; // 62 * 62
+        int outputBase = f * 3844;
         for (int y = 0; y < 62; y++) {
             for (int x = 0; x < 62; x++) {
                 float sum = 0;
@@ -53,13 +51,12 @@ void myRunConv2D() {
                     }
                 }
                 sum += GET_W(myConv1_b, f, myConv1_b_scale);
-                myConvOutput[outBase + (y * 62 + x)] = (sum > 0) ? sum : 0; // ReLU
+                myConvOutput[outputBase + (y * 62 + x)] = (sum > 0) ? sum : 0;
             }
         }
     }
 }
 
-// --- AI CORE: DENSE OUTPUT LAYER ---
 int myGetClassification() {
     float myLogits[3] = {0, 0, 0};
     int myFlattenSize = 15376; 
@@ -71,42 +68,49 @@ int myGetClassification() {
         }
         myLogits[i] = sum + GET_W(myOutput_b, i, myOutput_b_scale);
     }
-    // Simple ArgMax (Winner takes all)
     int win = (myLogits[1] > myLogits[0]) ? 1 : 0;
     if (myLogits[2] > myLogits[win]) win = 2;
     return win;
 }
 
-// --- IMAGE PROCESSING: 240x240 -> 64x64 ---
-void myProcessImage(camera_fb_t *fb) {
-    uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
-    if (!rgb) return;
-    fmt2rgb888(fb->buf, fb->len, fb->format, rgb);
+void myProcessCameraImage(camera_fb_t *fb) {
+    uint8_t *rgbBuf = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgbBuf) return;
+    fmt2rgb888(fb->buf, fb->len, fb->format, rgbBuf);
 
     float inv255 = 1.0f / 255.0f;
     for (int y = 0; y < 64; y++) {
         int srcY = y * (fb->height / 64);
+        int dstRow = y * 64;
         for (int x = 0; x < 64; x++) {
             int srcX = x * (fb->width / 64);
             int sIdx = (srcY * fb->width + srcX) * 3;
-            int dIdx = (y * 64 + x) * 3;
-            myInputBuffer[dIdx]     = rgb[sIdx]     * inv255;
-            myInputBuffer[dIdx + 1] = rgb[sIdx + 1] * inv255;
-            myInputBuffer[dIdx + 2] = rgb[sIdx + 2] * inv255;
+            int dIdx = (dstRow + x) * 3;
+            myInputBuffer[dIdx]     = rgbBuf[sIdx]     * inv255;
+            myInputBuffer[dIdx + 1] = rgbBuf[sIdx + 1] * inv255;
+            myInputBuffer[dIdx + 2] = rgbBuf[sIdx + 2] * inv255;
         }
     }
-    free(rgb);
+    free(rgbBuf);
+}
+
+void myPrintVisualCheck() {
+    Serial.println("\n--- TRIGGERED SNAPSHOT (64x64 VIEW) ---");
+    for (int y = 0; y < 64; y += 4) {
+        for (int x = 0; x < 64; x += 2) {
+            int idx = (y * 64 + x) * 3;
+            float gray = (myInputBuffer[idx] + myInputBuffer[idx+1] + myInputBuffer[idx+2]) / 3.0;
+            Serial.print(gray > 0.5 ? "@" : ".");
+        }
+        Serial.println();
+    }
+    Serial.println("---------------------------------------\n");
+    delay(200); // Short pause to make the ASCII art readable
 }
 
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(115200); // PREFERRED BAUD RATE
     
-    #ifdef USE_INT8_MODE
-      Serial.println("SYSTEM: INT8 COMPRESSION ACTIVE");
-    #else
-      Serial.println("SYSTEM: FLOAT32 PRECISION ACTIVE");
-    #endif
-
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer = LEDC_TIMER_0;
@@ -118,27 +122,38 @@ void setup() {
     config.pin_vsync = VSYNC_GPIO_NUM; config.pin_href = HREF_GPIO_NUM;
     config.pin_sscb_sda = SIOD_GPIO_NUM; config.pin_sscb_scl = SIOC_GPIO_NUM;
     config.pin_pwdn = -1; config.pin_reset = -1;
-    config.xclk_freq_hz = 20000000;
-    config.frame_size = FRAMESIZE_240X240; 
+    config.xclk_freq_hz = 20000000; 
+    config.frame_size = FRAMESIZE_240X240; // High-res capture
     config.pixel_format = PIXFORMAT_JPEG; 
     config.grab_mode = CAMERA_GRAB_LATEST;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.fb_count = 2;
     config.jpeg_quality = 10;
 
-    if (esp_camera_init(&config) != ESP_OK) { Serial.println("Camera Error"); return; }
+    if (esp_camera_init(&config) != ESP_OK) {
+        Serial.println("Camera Init Failed");
+        return;
+    }
+    Serial.println("Brain Ready at 115200 Baud");
 }
 
 void loop() {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) return;
-    myProcessImage(fb);
+    myProcessCameraImage(fb);
     esp_camera_fb_return(fb); 
+
+    // Snapshot check on Pin A0
+    if (analogRead(A0) > 2000) { 
+        myPrintVisualCheck();
+    }
 
     myRunConv2D();
     int result = myGetClassification();
 
-    Serial.print("Prediction: Class ");
+    // Classification Output
+    Serial.print("Class: ");
     Serial.println(result);
-    delay(100);
+
+    yield(); // Keeps internal systems alive while running at max speed
 }
