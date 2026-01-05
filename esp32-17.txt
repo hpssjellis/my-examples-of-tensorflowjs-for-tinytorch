@@ -1,0 +1,139 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "myModel.h" 
+
+// --- 1. CONFIGURATION & BUFFERS ---
+float myInputBuffer[64 * 64 * 3]; 
+float myConvOutput[62 * 62 * 4]; 
+
+#ifdef USE_INT8_MODE
+  #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
+#else
+  #define GET_W(arr, idx, scale) (arr[idx])
+  float myConv1_w_scale=1, myConv1_b_scale=1, myOutput_w_scale=1, myOutput_b_scale=1;
+#endif
+
+// Camera Pins (XIAO ESP32S3)
+#define XCLK_GPIO_NUM 10
+#define SIOD_GPIO_NUM 40
+#define SIOC_GPIO_NUM 39
+#define Y9_GPIO_NUM   48
+#define Y8_GPIO_NUM   11
+#define Y7_GPIO_NUM   12
+#define Y6_GPIO_NUM   14
+#define Y5_GPIO_NUM   16
+#define Y4_GPIO_NUM   18
+#define Y3_GPIO_NUM   17
+#define Y2_GPIO_NUM   15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// --- 2. THE BRAIN MATH (CONVOLUTION) ---
+void myRunInference() {
+    for (int f = 0; f < 4; f++) {
+        int outBase = f * 3844;
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pIdx = ((y+ky)*64 + (x+kx))*3;
+                        int wIdx = (f*27) + (ky*9) + (kx*3);
+                        sum += myInputBuffer[pIdx]   * GET_W(myConv1_w, wIdx,   myConv1_w_scale);
+                        sum += myInputBuffer[pIdx+1] * GET_W(myConv1_w, wIdx+1, myConv1_w_scale);
+                        sum += myInputBuffer[pIdx+2] * GET_W(myConv1_w, wIdx+2, myConv1_w_scale);
+                    }
+                }
+                sum += GET_W(myConv1_b, f, myConv1_b_scale);
+                // ReLU Activation: Negative numbers become 0
+                myConvOutput[outBase + (y*62 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+// --- 3. THE WINNER LOGIC ---
+int myGetWinner() {
+    float myLogits[3] = {0,0,0};
+    for (int i = 0; i < 3; i++) {
+        float sum = 0;
+        for (int j = 0; j < 15376; j++) {
+            sum += myConvOutput[j] * GET_W(myOutput_w, i*15376 + j, myOutput_w_scale);
+        }
+        myLogits[i] = sum + GET_W(myOutput_b, i, myOutput_b_scale);
+    }
+    int win = (myLogits[1] > myLogits[0]) ? 1 : 0;
+    if (myLogits[2] > myLogits[win]) win = 2;
+    return win;
+}
+
+// --- 4. IMAGE PROCESSING (240x240 -> 64x64) ---
+void myProcessCamera(camera_fb_t *fb) {
+    uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgb) return;
+    fmt2rgb888(fb->buf, fb->len, fb->format, rgb);
+
+    // FIX: Normalization Bias (+0.1) prevents math stalls
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            int sIdx = (y*(fb->height/64)*fb->width + x*(fb->width/64))*3;
+            int dIdx = (y*64 + x)*3;
+            myInputBuffer[dIdx]   = (rgb[sIdx]   + 0.1f) / 255.1f;
+            myInputBuffer[dIdx+1] = (rgb[sIdx+1] + 0.1f) / 255.1f;
+            myInputBuffer[dIdx+2] = (rgb[sIdx+2] + 0.1f) / 255.1f;
+        }
+    }
+    free(rgb);
+}
+
+void setup() {
+    Serial.begin(115200);
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM; config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM; config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM; config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM; config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM; config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM; config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM; config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1; config.pin_reset = -1;
+    config.xclk_freq_hz = 10000000;   // 20000000;
+    config.frame_size = FRAMESIZE_240X240;
+   // config.frame_size = FRAMESIZE_QVGA;   // 320x240
+    config.pixel_format = PIXFORMAT_JPEG;
+    config.grab_mode = CAMERA_GRAB_LATEST;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 1;
+    config.jpeg_quality = 12;
+    esp_camera_init(&config);
+    Serial.println("System Online: Shuffled Brain Ready");
+}
+
+void loop() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (fb) {
+        myProcessCamera(fb);
+        esp_camera_fb_return(fb);
+        
+        // A0 Snapshot Print (ASCII Art)
+        if (analogRead(A0) > 2000) {
+            Serial.println("--- AI VIEW ---");
+            for (int y=0; y<64; y+=4) {
+                for (int x=0; x<64; x+=2) {
+                    Serial.print(myInputBuffer[(y*64+x)*3] > 0.5 ? "@" : ".");
+                }
+                Serial.println();
+            }
+            delay(1000);
+        }
+        
+        myRunInference();
+        Serial.print("Class: ");
+        Serial.println(myGetWinner());
+    }
+   // yield();
+   delay(100);
+}
