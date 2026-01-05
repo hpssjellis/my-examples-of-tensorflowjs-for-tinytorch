@@ -1,0 +1,166 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include <math.h>
+
+// 1. IMPORT YOUR MODEL DATA
+#include "myModel.h" 
+
+// --- CAMERA PINS (XIAO ESP32S3) ---
+#define XCLK_GPIO_NUM  10
+#define SIOD_GPIO_NUM  40
+#define SIOC_GPIO_NUM  39
+#define Y9_GPIO_NUM    48
+#define Y8_GPIO_NUM    11
+#define Y7_GPIO_NUM    12
+#define Y6_GPIO_NUM    14
+#define Y5_GPIO_NUM    16
+#define Y4_GPIO_NUM    18
+#define Y3_GPIO_NUM    17
+#define Y2_GPIO_NUM    15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// Global buffers for inference
+float myInputBuffer[64 * 64 * 3]; 
+float myConvOutput[62 * 62 * 4]; 
+float myConfidences[3]; // Stores the percentage for each class
+
+// --- THE INFERENCE ENGINE ---
+
+void myRunConv2D() {
+    for (int f = 0; f < 4; f++) {
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pixelIdx = ((y + ky) * 64 + (x + kx)) * 3;
+                        int weightBase = (f * 27) + (ky * 9) + (kx * 3);
+                        sum += myInputBuffer[pixelIdx]     * myConv1_w[weightBase];
+                        sum += myInputBuffer[pixelIdx + 1] * myConv1_w[weightBase + 1];
+                        sum += myInputBuffer[pixelIdx + 2] * myConv1_w[weightBase + 2];
+                    }
+                }
+                sum += myConv1_b[f];
+                myConvOutput[(f * 3844) + (y * 62 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+int myCalculateSoftmax() {
+    float myLogits[3];
+    int myFlattenSize = 62 * 62 * 4; 
+    
+    // 1. Calculate Raw Scores (Logits)
+    for (int i = 0; i < 3; i++) {
+        float sum = 0;
+        for (int j = 0; j < myFlattenSize; j++) {
+            sum += myConvOutput[j] * myOutput_w[i * myFlattenSize + j];
+        }
+        myLogits[i] = sum + myOutput_b[i];
+    }
+
+    // 2. Softmax Math (Converts scores to 0.0 - 1.0 probability)
+    float myExpSum = 0;
+    for (int i = 0; i < 3; i++) {
+        myConfidences[i] = exp(myLogits[i]);
+        myExpSum += myConfidences[i];
+    }
+
+    int myWinner = 0;
+    for (int i = 0; i < 3; i++) {
+        myConfidences[i] /= myExpSum; // Normalize to percentage
+        if (myConfidences[i] > myConfidences[myWinner]) myWinner = i;
+    }
+    return myWinner;
+}
+
+// --- IMAGE PROCESSING ---
+
+void myProcessCameraImage(camera_fb_t *fb) {
+    uint8_t *rgbBuf = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgbBuf) return;
+    fmt2rgb888(fb->buf, fb->len, fb->format, rgbBuf);
+
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            int srcX = x * (fb->width / 64);
+            int srcY = y * (fb->height / 64);
+            int srcIdx = (srcY * fb->width + srcX) * 3;
+            int dstIdx = (y * 64 + x) * 3;
+            myInputBuffer[dstIdx]     = rgbBuf[srcIdx]     / 255.0;
+            myInputBuffer[dstIdx + 1] = rgbBuf[srcIdx + 1] / 255.0;
+            myInputBuffer[dstIdx + 2] = rgbBuf[srcIdx + 2] / 255.0;
+        }
+    }
+    free(rgbBuf);
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(A0, INPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, HIGH); // LED Off (Active Low)
+
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1;
+    config.pin_reset = -1;
+    config.xclk_freq_hz = 10000000;
+    config.frame_size = FRAMESIZE_QVGA;
+    config.pixel_format = PIXFORMAT_JPEG; 
+    config.grab_mode = CAMERA_GRAB_LATEST;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 2;
+
+    esp_camera_init(&config);
+    Serial.println("System Online. Squeeze A0 to analyze!");
+}
+
+void loop() {
+    int mySqueeze = analogRead(A0);
+
+    // If A0 is squeezed (voltage goes high)
+    if (mySqueeze > 1000) {
+        digitalWrite(LED_BUILTIN, LOW); // LED On
+        Serial.println("\n--- Triggered Analysis ---");
+
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (fb) {
+            myProcessCameraImage(fb);
+            esp_camera_fb_return(fb); 
+
+            myRunConv2D();
+            int winner = myCalculateSoftmax();
+
+            // Print detailed results
+            Serial.print("WINNER: Class "); Serial.println(winner);
+            for (int i = 0; i < 3; i++) {
+                Serial.print("Class "); Serial.print(i);
+                Serial.print(": "); Serial.print(myConfidences[i] * 100);
+                Serial.println("%");
+            }
+        }
+        
+        delay(1000); // Debounce / Wait so we don't spam
+        digitalWrite(LED_BUILTIN, HIGH); // LED Off
+        Serial.println("Ready for next squeeze...");
+    }
+}
