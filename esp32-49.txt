@@ -107,9 +107,11 @@ void myConv2() {
 }
 
 // --- 3. THE WINNER LOGIC [cite: 96] ---
+// --- 3. THE WINNER LOGIC WITH PERCENTAGES ---
 int myGetWinner() {
     float myLogits[3] = {0, 0, 0};
     int totalFeatures = 29 * 29 * 8;
+    
     for (int i = 0; i < 3; i++) {
         double sum = 0.0; double compensation = 0.0;
         for (int j = 0; j < totalFeatures; j++) {
@@ -121,8 +123,32 @@ int myGetWinner() {
         }
         myLogits[i] = clipValue((float)sum + GET_W(myOutput_b, i, myOutput_b_scale), -50.0f, 50.0f);
     }
+
+    // 1. Calculate Softmax for Percentages
+    float maxLogit = max(max(myLogits[0], myLogits[1]), myLogits[2]);
+    float expSum = 0;
+    float myProbs[3];
+    for (int i = 0; i < 3; i++) {
+        myProbs[i] = exp(myLogits[i] - maxLogit);
+        expSum += myProbs[i];
+    }
+
+    // 2. Determine Winner
     int win = (myLogits[1] > myLogits[0]) ? 1 : 0;
     if (myLogits[2] > myLogits[win]) win = 2;
+
+    // 3. Print result and all percentages on one line
+    Serial.print("Class: "); Serial.print(win);
+    Serial.print(" ("); Serial.print(myClassLabels[win]); Serial.print(") ");
+    
+    Serial.print("Scores: [");
+    for (int i = 0; i < 3; i++) {
+        Serial.print((myProbs[i] / expSum) * 100, 0); // 0 decimal places for clean look
+        Serial.print("%");
+        if (i < 2) Serial.print(", ");
+    }
+    Serial.println("]");
+
     return win;
 }
 
