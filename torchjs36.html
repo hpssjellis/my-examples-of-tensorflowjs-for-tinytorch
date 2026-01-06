@@ -1,12 +1,8 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Rocksetta Pro: Master Optimizer</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
-</head>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
 <body style="font-family: sans-serif; background-color: #fdfdfd; padding: 10px;">
 
-<h2 align="center">Rocksetta Pro: Master Optimizer (Anti-Overflow Edition)</h2>
+<h2 align="center">Rocksetta Pro: Master Optimizer (Anti-Overflow)</h2>
 
 <div id="myCodeSpace"> 
   <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
@@ -27,17 +23,17 @@
       <b>Training:</b><br>
       <div style="display: flex; justify-content: space-between; margin-top:5px; text-align:center;">
         <div>
-          <input type="button" value="Train 0" onclick="myCollect(0)" style="background:#ffebee;">
+          <input type="button" value="Train 0" onclick="myCollect(0)">
           <br><input type="text" id="myLabel0" value="Rock" size="8">
           <br><span id="myCount0" style="font-size:11px; color:#666;">0 samples</span>
         </div>
         <div>
-          <input type="button" value="Train 1" onclick="myCollect(1)" style="background:#e8f5e9;">
+          <input type="button" value="Train 1" onclick="myCollect(1)">
           <br><input type="text" id="myLabel1" value="Paper" size="8">
           <br><span id="myCount1" style="font-size:11px; color:#666;">0 samples</span>
         </div>
         <div>
-          <input type="button" value="Train 2" onclick="myCollect(2)" style="background:#e3f2fd;">
+          <input type="button" value="Train 2" onclick="myCollect(2)">
           <br><input type="text" id="myLabel2" value="Scissor" size="8">
           <br><span id="myCount2" style="font-size:11px; color:#666;">0 samples</span>
         </div>
@@ -45,31 +41,29 @@
     </div>
 
     <div style="flex: 1; min-width: 350px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
-      <b>2. Edge AI Export (ESP32)</b><hr>
+      <b>2. Edge AI Export</b><hr>
       <label style="font-weight: bold; color: darkgreen; cursor: pointer;">
         <input type="checkbox" id="myInt8Toggle"> Use Int8 Quantization
       </label>
-      <p style="font-size: 11px;">(Reduces .h file size significantly)</p>
+      <p style="font-size: 11px;">(Saves memory on ESP32)</p>
       <b>Export Name:</b><br>
       <input type="text" id="myExportName" value="myModel" style="width:70%;"> .h
       <br><br>
       <input type="button" value="GENERATE (.h)" style="background-color:#4CAF50; color:white; width:100%; padding:15px; font-weight:bold; border-radius: 5px; cursor:pointer;" onclick="myExportHeader()">
       <hr>
-      <div id="myOutputDisplay" style="border: 1px solid green; padding: 10px; background: white; min-height: 50px; border-radius:5px;">
-        Click Start to begin...
-      </div>
+      <div id="myOutputDisplay" style="border: 1px solid green; padding: 10px; background: white; min-height: 50px;">Ready...</div>
     </div>
 
     <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
       <b>3. Activity Logs</b><hr>
       <div id="myDivHistory" style="border: 1px solid blue; padding: 8px; height: 300px; overflow-y: scroll; font-family: monospace; font-size: 0.85em; background: #f1f8ff; border-radius: 5px;">
-        System Idle...
+        Logs will appear here...
       </div>
     </div>
   </div>
 
   <script>
-    var myModel, myTimer;
+    var myModel, myTimer, myLastID = -1;
     var myTrainData = {0:[], 1:[], 2:[]};
     var myMaxBuffer = 100;
 
@@ -79,13 +73,17 @@
         myDiv.innerHTML = `[${myTime}] ${myMsg}<br>` + myDiv.innerHTML;
     }
 
-    // DATA AUGMENTATION: Prevents the model from being too rigid
     function myAugment(tensor) {
       return tf.tidy(() => {
         let augmented = tensor;
         if (Math.random() > 0.5) {
           const brightness = (Math.random() - 0.5) * 0.2;
           augmented = augmented.add(brightness).clipByValue(0, 1);
+        }
+        if (Math.random() > 0.5) {
+          const contrast = 0.8 + Math.random() * 0.4;
+          const mean = augmented.mean();
+          augmented = augmented.sub(mean).mul(contrast).add(mean).clipByValue(0, 1);
         }
         return augmented;
       });
@@ -95,126 +93,153 @@
       const myVideo = document.getElementById('myVideo1');
       if (!myVideo.srcObject) {
         const myDeviceId = document.getElementById('myCameraSelect').value;
-        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({
-            video: { width: 240, height: 240, deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
-        });
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({video: { width: 240, height: 240, deviceId: myDeviceId ? { exact: myDeviceId } : undefined }});
         myLog("Camera Started");
       }
 
       if (!myModel) {
         myModel = tf.sequential();
-        // Layer 1: Detects shapes
         myModel.add(tf.layers.conv2d({inputShape:[64,64,3], kernelSize:3, filters:4, activation:'relu'}));
         myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
-        // Layer 2: Patterns
         myModel.add(tf.layers.conv2d({kernelSize:3, filters:8, activation:'relu'}));
         
-        // THE OVF FIX: Global Average Pooling instead of Flatten
-        // This makes the ESP32 logic iterate 8 times instead of 6728.
-        myModel.add(tf.layers.globalAveragePooling2d());
+        // --- THE OVF FIX ---
+        myModel.add(tf.layers.globalAveragePooling2d()); 
         
         myModel.add(tf.layers.dense({units:3, activation:'softmax'}));
         myModel.compile({optimizer: tf.train.adam(0.005), loss:'categoricalCrossentropy'});
-        myLog("Brain Ready: Using Global Average Pooling");
+        myLog("Brain Ready: Global Average Pooling active.");
       }
 
       if (myTimer) clearInterval(myTimer);
       myTimer = setInterval(async () => {
-        tf.tidy(() => {
-            const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
-            
-            // 1. Prediction (Always runs)
-            const myPred = myModel.predict(myInput);
-            myPred.data().then(myProbs => {
-                const myID = myProbs.indexOf(Math.max(...myProbs));
-                const conf = (myProbs[myID] * 100).toFixed(0);
-                const labelName = document.getElementById('myLabel'+myID).value;
-                
-                document.getElementById('myOutputDisplay').innerHTML = 
-                  `DETECTED: <b style="color:blue;">${labelName}</b> (${conf}%)<br>` +
-                  `<div style="background:#eee; width:100%; height:10px; border-radius:5px; margin-top:5px;">` +
-                  `<div style="background:blue; width:${conf}%; height:10px; border-radius:5px;"></div></div>`;
-            });
+        const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
+        
+        if (myTrainData[0].length >= 10 && myTrainData[1].length >= 10 && myTrainData[2].length >= 10) {
+          let myBatch = [];
+          let myLabels = [];
+          for (let b = 0; b < 6; b++) {
+            const cls = b % 3;
+            const rIdx = Math.floor(Math.random() * myTrainData[cls].length);
+            const sample = myTrainData[cls][rIdx];
+            myBatch.push((Math.random() > 0.5) ? myAugment(sample) : sample);
+            myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
+          }
+          const bx = tf.concat(myBatch);
+          const by = tf.tensor2d(myLabels);
+          await myModel.trainOnBatch(bx, by);
+          bx.dispose(); by.dispose();
+        }
 
-            // 2. Training (Only if we have data)
-            if (myTrainData[0].length > 0 && myTrainData[1].length > 0 && myTrainData[2].length > 0) {
-              let myBatch = [];
-              let myLabels = [];
-              for (let b = 0; b < 6; b++) {
-                const cls = b % 3;
-                const rIdx = Math.floor(Math.random() * myTrainData[cls].length);
-                const sample = myTrainData[cls][rIdx];
-                myBatch.push(Math.random() > 0.5 ? myAugment(sample) : sample);
-                myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
-              }
-              const bx = tf.concat(myBatch);
-              const by = tf.tensor2d(myLabels);
-              myModel.trainOnBatch(bx, by);
-            }
-        });
-      }, 100);
+        const myPred = myModel.predict(myInput);
+        const myProbs = await myPred.data();
+        const myID = (await myPred.argMax(1).data())[0];
+        
+        document.getElementById('myOutputDisplay').innerHTML = 
+          `DETECTED: <b>${document.getElementById('myLabel'+myID).value}</b><br>` +
+          `[${(myProbs[0]*100).toFixed(1)}%, ${(myProbs[1]*100).toFixed(1)}%, ${(myProbs[2]*100).toFixed(1)}%]`;
+        
+        myInput.dispose(); myPred.dispose();
+      }, 150);
     }
 
     async function myExportHeader() {
-      if(!myModel) return;
+      if(!myModel) { myLog("Error: No Model"); return; }
       const myIsInt8 = document.getElementById('myInt8Toggle').checked;
-      let myText = `// AI Model for ESP32 - Generated via Rocksetta Pro\n`;
-      myText += `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+      let myText = `// Enhanced CNN with Labels\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
       
-      // Export class labels for the ESP32 code to use
-      const l0 = document.getElementById('myLabel0').value;
-      const l1 = document.getElementById('myLabel1').value;
-      const l2 = document.getElementById('myLabel2').value;
-      myText += `const char* myLabels[] = {"${l0}", "${l1}", "${l2}"};\n\n`;
+      const label0 = document.getElementById('myLabel0').value;
+      const label1 = document.getElementById('myLabel1').value;
+      const label2 = document.getElementById('myLabel2').value;
+      myText += `const char* myLabels[] = {"${label0}", "${label1}", "${label2}"};\n\n`;
 
       if (myIsInt8) { myText += `#define USE_INT8_MODE\n\n`; }
       
       const myNames = ["myConv1_w", "myConv1_b", "myConv2_w", "myConv2_b", "myOutput_w", "myOutput_b"];
-      let nameIdx = 0;
+      let myNameIdx = 0;
       
-      for (let layer of myModel.layers) {
-          if (layer.getWeights().length === 0) continue;
-          for (let weight of layer.getWeights()) {
-              let data = await weight.data();
+      for (let myL of myModel.layers) {
+          if (myL.getWeights().length === 0) continue;
+          for (let myW of myL.getWeights()) {
+              let myData = await myW.data();
               if (myIsInt8) {
-                  const maxV = Math.max(...Array.from(data).map(Math.abs));
-                  const scale = 127.0 / (maxV || 1);
-                  myText += `const float ${myNames[nameIdx]}_scale = ${scale.toFixed(6)}f;\n`;
-                  myText += `const int8_t ${myNames[nameIdx]}[] = { ${Array.from(data).map(v => Math.round(v * scale)).join(', ')} };\n\n`;
+                  const myMax = Math.max(...Array.from(myData).map(Math.abs));
+                  const myScale = 127.0 / (myMax || 1);
+                  myText += `const float ${myNames[myNameIdx]}_scale = ${myScale.toFixed(6)}f;\n`;
+                  myText += `const int8_t ${myNames[myNameIdx]}[] = { ${Array.from(myData).map(v => Math.round(v * myScale)).join(', ')} };\n\n`;
               } else {
-                  myText += `const float ${myNames[nameIdx]}[] = { ${Array.from(data).map(v => v.toFixed(6)).join(', ')} };\n\n`;
+                  myText += `const float ${myNames[myNameIdx]}[] = { ${Array.from(myData).map(v => v.toFixed(6)).join(', ')} };\n\n`;
               }
-              nameIdx++;
+              myNameIdx++;
           }
       }
       myText += `#endif`;
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(new Blob([myText]));
-      link.download = document.getElementById('myExportName').value + ".h";
-      link.click();
-      myLog("Header Exported Successfully");
+      const myLink = document.createElement('a');
+      myLink.href = URL.createObjectURL(new Blob([myText]));
+      myLink.download = document.getElementById('myExportName').value + ".h";
+      myLink.click();
     }
 
-    function myCollect(id) {
-      const vid = document.getElementById('myVideo1');
-      const frame = tf.tidy(() => tf.browser.fromPixels(vid).resizeBilinear([64,64]).div(255.0).expandDims(0));
-      if (myTrainData[id].length < myMaxBuffer) {
-        myTrainData[id].push(frame);
+    function myCollect(myID) {
+      const myVideo = document.getElementById('myVideo1');
+      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
+      if (myTrainData[myID].length < myMaxBuffer) {
+        myTrainData[myID].push(myFrame);
       } else {
-        myTrainData[id][0].dispose();
-        myTrainData[id].shift();
-        myTrainData[id].push(frame);
+        myTrainData[myID][0].dispose();
+        myTrainData[myID].shift();
+        myTrainData[myID].push(myFrame);
       }
-      document.getElementById('myCount'+id).innerHTML = `${myTrainData[id].length} samples`;
+      document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
     }
 
     async function mySaveModel() { await myModel.save('downloads://my-tfjs-model'); }
     async function myLoadModel() {
-        const u = document.createElement('input'); u.type='file'; u.multiple=true;
-        u.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog("Model Loaded"); };
-        u.click();
+        const myU = document.createElement('input'); myU.type = 'file'; myU.multiple = true;
+        myU.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog("Model Loaded"); };
+        myU.click();
     }
   </script>
 </div>
+
+<div align="center">
+  <input id="myUpdateBtn" type="button" value="Update & Run Code" style="visibility:hidden; background-color: yellow; font-weight:bold; padding:12px; border-radius:8px; cursor:pointer;" onclick="myApplyAndRun()">
+</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:15px; padding:10px; border-radius:10px;" onclick="myToggleEditor()">
+Click here to see/edit the Source Code...
+</textarea>
+
+<script>
+let myOnce = true;
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); myLines.shift(); myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myLog("Code Updated & Restarting...");
+  myStartAll();
+}
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.rows = 20;
+}
+(async function init() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
+</script>
 </body>
-</html>
