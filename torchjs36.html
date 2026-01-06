@@ -2,7 +2,7 @@
 
 <body style="font-family: sans-serif; background-color: #fdfdfd; padding: 10px;">
 
-<h2 align="center">Rocksetta Pro: Master Optimizer (Anti-Overflow)</h2>
+<h2 align="center">Rocksetta Pro: Master Optimizer (Final Fix)</h2>
 
 <div id="myCodeSpace"> 
   <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
@@ -63,7 +63,7 @@
   </div>
 
   <script>
-    var myModel, myTimer, myLastID = -1;
+    var myModel, myTimer;
     var myTrainData = {0:[], 1:[], 2:[]};
     var myMaxBuffer = 100;
 
@@ -79,11 +79,6 @@
         if (Math.random() > 0.5) {
           const brightness = (Math.random() - 0.5) * 0.2;
           augmented = augmented.add(brightness).clipByValue(0, 1);
-        }
-        if (Math.random() > 0.5) {
-          const contrast = 0.8 + Math.random() * 0.4;
-          const mean = augmented.mean();
-          augmented = augmented.sub(mean).mul(contrast).add(mean).clipByValue(0, 1);
         }
         return augmented;
       });
@@ -102,31 +97,28 @@
         myModel.add(tf.layers.conv2d({inputShape:[64,64,3], kernelSize:3, filters:4, activation:'relu'}));
         myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
         myModel.add(tf.layers.conv2d({kernelSize:3, filters:8, activation:'relu'}));
-        
-        // --- THE OVF FIX ---
         myModel.add(tf.layers.globalAveragePooling2d()); 
-        
         myModel.add(tf.layers.dense({units:3, activation:'softmax'}));
         myModel.compile({optimizer: tf.train.adam(0.005), loss:'categoricalCrossentropy'});
-        myLog("Brain Ready: Global Average Pooling active.");
+        myLog("Brain Initialized (Anti-Overflow active)");
       }
 
       if (myTimer) clearInterval(myTimer);
       myTimer = setInterval(async () => {
         const myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
         
-        if (myTrainData[0].length >= 10 && myTrainData[1].length >= 10 && myTrainData[2].length >= 10) {
-          let myBatch = [];
-          let myLabels = [];
-          for (let b = 0; b < 6; b++) {
-            const cls = b % 3;
-            const rIdx = Math.floor(Math.random() * myTrainData[cls].length);
-            const sample = myTrainData[cls][rIdx];
-            myBatch.push((Math.random() > 0.5) ? myAugment(sample) : sample);
-            myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
-          }
-          const bx = tf.concat(myBatch);
-          const by = tf.tensor2d(myLabels);
+        // Train if we have at least 1 sample per class
+        if (myTrainData[0].length > 0 && myTrainData[1].length > 0 && myTrainData[2].length > 0) {
+          const bx = tf.tidy(() => {
+            let batch = [];
+            for (let b = 0; b < 6; b++) {
+              const cls = b % 3;
+              const rIdx = Math.floor(Math.random() * myTrainData[cls].length);
+              batch.push(myAugment(myTrainData[cls][rIdx]));
+            }
+            return tf.concat(batch);
+          });
+          const by = tf.tensor2d([[1,0,0],[0,1,0],[0,0,1],[1,0,0],[0,1,0],[0,0,1]]);
           await myModel.trainOnBatch(bx, by);
           bx.dispose(); by.dispose();
         }
@@ -144,60 +136,65 @@
     }
 
     async function myExportHeader() {
-      if(!myModel) { myLog("Error: No Model"); return; }
+      if(!myModel) return;
       const myIsInt8 = document.getElementById('myInt8Toggle').checked;
-      let myText = `// Enhanced CNN with Labels\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+      let myText = `// CNN Model with Labels\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
       
-      const label0 = document.getElementById('myLabel0').value;
-      const label1 = document.getElementById('myLabel1').value;
-      const label2 = document.getElementById('myLabel2').value;
-      myText += `const char* myLabels[] = {"${label0}", "${label1}", "${label2}"};\n\n`;
+      const l0 = document.getElementById('myLabel0').value;
+      const l1 = document.getElementById('myLabel1').value;
+      const l2 = document.getElementById('myLabel2').value;
+      myText += `const char* myLabels[] = {"${l0}", "${l1}", "${l2}"};\n\n`;
 
       if (myIsInt8) { myText += `#define USE_INT8_MODE\n\n`; }
       
+      // We manually map the weights to ensure we get w and b for all layers
       const myNames = ["myConv1_w", "myConv1_b", "myConv2_w", "myConv2_b", "myOutput_w", "myOutput_b"];
-      let myNameIdx = 0;
+      let nameIdx = 0;
       
-      for (let myL of myModel.layers) {
-          if (myL.getWeights().length === 0) continue;
-          for (let myW of myL.getWeights()) {
-              let myData = await myW.data();
+      for (let layer of myModel.layers) {
+          const weights = layer.getWeights();
+          if (weights.length === 0) continue;
+          
+          for (let w of weights) {
+              let data = await w.data();
+              let curName = myNames[nameIdx];
               if (myIsInt8) {
-                  const myMax = Math.max(...Array.from(myData).map(Math.abs));
-                  const myScale = 127.0 / (myMax || 1);
-                  myText += `const float ${myNames[myNameIdx]}_scale = ${myScale.toFixed(6)}f;\n`;
-                  myText += `const int8_t ${myNames[myNameIdx]}[] = { ${Array.from(myData).map(v => Math.round(v * myScale)).join(', ')} };\n\n`;
+                  const maxV = Math.max(...Array.from(data).map(Math.abs));
+                  const scale = 127.0 / (maxV || 1);
+                  myText += `const float ${curName}_scale = ${scale.toFixed(6)}f;\n`;
+                  myText += `const int8_t ${curName}[] = { ${Array.from(data).map(v => Math.round(v * scale)).join(', ')} };\n\n`;
               } else {
-                  myText += `const float ${myNames[myNameIdx]}[] = { ${Array.from(myData).map(v => v.toFixed(6)).join(', ')} };\n\n`;
+                  myText += `const float ${curName}[] = { ${Array.from(data).map(v => v.toFixed(6)).join(', ')} };\n\n`;
               }
-              myNameIdx++;
+              nameIdx++;
           }
       }
       myText += `#endif`;
-      const myLink = document.createElement('a');
-      myLink.href = URL.createObjectURL(new Blob([myText]));
-      myLink.download = document.getElementById('myExportName').value + ".h";
-      myLink.click();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([myText]));
+      link.download = document.getElementById('myExportName').value + ".h";
+      link.click();
+      myLog("Header Exported with all 6 weight arrays!");
     }
 
-    function myCollect(myID) {
-      const myVideo = document.getElementById('myVideo1');
-      const myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]).div(255.0).expandDims(0);
-      if (myTrainData[myID].length < myMaxBuffer) {
-        myTrainData[myID].push(myFrame);
+    function myCollect(id) {
+      const vid = document.getElementById('myVideo1');
+      const frame = tf.tidy(() => tf.browser.fromPixels(vid).resizeBilinear([64,64]).div(255.0).expandDims(0));
+      if (myTrainData[id].length < myMaxBuffer) {
+        myTrainData[id].push(frame);
       } else {
-        myTrainData[myID][0].dispose();
-        myTrainData[myID].shift();
-        myTrainData[myID].push(myFrame);
+        myTrainData[id][0].dispose();
+        myTrainData[id].shift();
+        myTrainData[id].push(frame);
       }
-      document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
+      document.getElementById('myCount'+id).innerHTML = `${myTrainData[id].length} samples`;
     }
 
     async function mySaveModel() { await myModel.save('downloads://my-tfjs-model'); }
     async function myLoadModel() {
-        const myU = document.createElement('input'); myU.type = 'file'; myU.multiple = true;
-        myU.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog("Model Loaded"); };
-        myU.click();
+        const u = document.createElement('input'); u.type='file'; u.multiple=true;
+        u.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog("Model Loaded"); };
+        u.click();
     }
   </script>
 </div>
