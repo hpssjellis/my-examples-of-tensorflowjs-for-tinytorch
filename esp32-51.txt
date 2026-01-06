@@ -196,6 +196,8 @@ void myProcessCamera(camera_fb_t *fb) {
                 if (norm < 0.0f) norm = 0.0f;
                 if (norm > 1.0f) norm = 1.0f;
 
+                norm = sqrtf(norm);   // ≈ gamma 2.0
+
                 myInputBuffer[(y * 64 + x) * 3 + c] = norm;
             }
         }
