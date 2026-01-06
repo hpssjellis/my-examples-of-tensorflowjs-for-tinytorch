@@ -216,7 +216,18 @@
           // CRITICAL: Dispose all temporary tensors immediately after training
           myBatchTensor.dispose();
           myLabelsTensor.dispose();
-          myBatch.forEach(t => t.dispose());
+          // Only dispose augmented tensors (not original samples from myTrainData)
+          myBatch.forEach(t => {
+            // Check if this tensor is not one of the stored training samples
+            let isStoredSample = false;
+            for (let cls = 0; cls < 3; cls++) {
+              if (myTrainData[cls].includes(t)) {
+                isStoredSample = true;
+                break;
+              }
+            }
+            if (!isStoredSample) t.dispose();
+          });
           
           // Update training metrics only if loss is valid
           myEpochCount++;
@@ -474,6 +485,9 @@ function myTextGrow(myT, myC) {
   });
 })();
 </script>
+
+
+
 
 
 
