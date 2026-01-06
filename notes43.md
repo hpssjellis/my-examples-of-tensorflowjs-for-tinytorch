@@ -1,0 +1,1 @@
+Read this file 3 times until you fully understand what it does. The microcontroller code is for the seeedestudio xiao esp32s3 sense which has a camera. Can you make suggestions why the microcontroller image processing might be slightly different than the webcam image training causing the vision model not to work?
