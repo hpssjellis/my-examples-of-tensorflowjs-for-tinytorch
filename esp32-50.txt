@@ -170,6 +170,12 @@ int myGetWinner() {
 }
 
 // --- 6. IMPROVED IMAGE PROCESSING (240x240 -> 64x64) ---
+
+
+
+
+
+
 void myProcessCamera(camera_fb_t *fb) {
     uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
     if (!rgb) {
@@ -188,38 +194,48 @@ void myProcessCamera(camera_fb_t *fb) {
     float scaleX = (float)fb->width / 64.0f;
 
     for (int y = 0; y < 64; y++) {
-        // Calculate floating point source coordinates
+
         float srcY = (y + 0.5f) * scaleY - 0.5f;
         int y0 = (int)srcY;
         int y1 = min(y0 + 1, (int)fb->height - 1);
         float dy = srcY - y0;
 
         for (int x = 0; x < 64; x++) {
+
             float srcX = (x + 0.5f) * scaleX - 0.5f;
             int x0 = (int)srcX;
             int x1 = min(x0 + 1, (int)fb->width - 1);
             float dx = srcX - x0;
 
-            // Get indices for the 4 surrounding pixels
             int idx00 = (y0 * fb->width + x0) * 3;
             int idx01 = (y0 * fb->width + x1) * 3;
             int idx10 = (y1 * fb->width + x0) * 3;
             int idx11 = (y1 * fb->width + x1) * 3;
 
-            // Perform bilinear interpolation for each color channel (R, G, B)
             for (int c = 0; c < 3; c++) {
-                float val = (1.0f - dy) * ((1.0f - dx) * rgb[idx00 + c] + dx * rgb[idx01 + c]) +
-                            dy * ((1.0f - dx) * rgb[idx10 + c] + dx * rgb[idx11 + c]);
-                
-                // FIXED: Match TensorFlow.js normalization exactly - divide by 255.0 ONLY
-                // This removes the bias that was causing class preference
-                myInputBuffer[(y * 64 + x) * 3 + c] = val / 255.0f;
+
+                float val =
+                    (1.0f - dy) * ((1.0f - dx) * rgb[idx00 + c] +
+                                   dx * rgb[idx01 + c]) +
+                     dy * ((1.0f - dx) * rgb[idx10 + c] +
+                           dx * rgb[idx11 + c]);
+
+                // --- NORMALIZATION (unchanged) ---
+                float norm = val / 255.0f;
+
+                // === CHANGE #2: Black-level correction ===
+                norm = (norm - 0.14f) / (1.0f - 0.14f);
+                if (norm < 0.0f) norm = 0.0f;
+                if (norm > 1.0f) norm = 1.0f;
+
+                myInputBuffer[(y * 64 + x) * 3 + c] = norm;
             }
         }
     }
+
     free(rgb);
-    
-    // ADDED: Validation check to detect camera issues
+
+    // --- Existing diagnostics (unchanged) ---
     float sum = 0;
     int validPixels = 0;
     for (int i = 0; i < 64*64*3; i++) {
@@ -228,32 +244,24 @@ void myProcessCamera(camera_fb_t *fb) {
             validPixels++;
         }
     }
-    
+
     if (validPixels < 64*64*3) {
         Serial.println("WARNING: Invalid pixels detected in camera input!");
     }
-    
+
     float avgBrightness = sum / validPixels;
-    // Warn if camera is showing completely black or white image
+
     if (avgBrightness < 0.01f) {
         Serial.println("WARNING: Camera image too dark!");
     } else if (avgBrightness > 0.99f) {
         Serial.println("WARNING: Camera image overexposed!");
     }
-
-
-     // === CHANGE #1: Per-frame mean centering (ADD-ONLY) ===
-    float mean = 0.0f;
-    for (int i = 0; i < 64*64*3; i++) {
-        mean += myInputBuffer[i];
-    }
-    mean /= (64.0f * 64.0f * 3.0f);
-
-    // Shift distribution to reduce camera bias
-    for (int i = 0; i < 64*64*3; i++) {
-        myInputBuffer[i] = myInputBuffer[i] - mean + 0.5f;
-    }
 }
+
+
+
+
+
 
 
 void setup() {
