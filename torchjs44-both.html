@@ -101,21 +101,34 @@ function myLog(m){
    NEAREST-NEIGHBOR RESIZE
    (ESP32-MATCHING)
 ========================= */
-function myResizeNN(t){
-  return tf.tidy(()=>{
-    const h = t.shape[0];
-    const w = t.shape[1];
-    let xs = [];
-    for(let y=0;y<64;y++){
-      for(let x=0;x<64;x++){
-        const sy = Math.floor(y*h/64);
-        const sx = Math.floor(x*w/64);
-        xs.push(t.slice([sy,sx,0],[1,1,3]));
+function myResizeNN(myTensor){
+  return tf.tidy(() => {
+
+    const myH = myTensor.shape[0];
+    const myW = myTensor.shape[1];
+
+    let myRows = [];
+
+    for (let y = 0; y < 64; y++) {
+      const mySy = Math.floor(y * myH / 64);
+      let myRow = [];
+
+      for (let x = 0; x < 64; x++) {
+        const mySx = Math.floor(x * myW / 64);
+        myRow.push(
+          myTensor.slice([mySy, mySx, 0], [1, 1, 3])
+        );
       }
+
+      // Concatenate pixels horizontally → [1, 64, 3]
+      myRows.push(tf.concat(myRow, 1));
     }
-    return tf.concat(xs).reshape([64,64,3]);
+
+    // Stack rows vertically → [64, 64, 3]
+    return tf.concat(myRows, 0);
   });
 }
+
 
 /* =========================
    SIMPLE CAMERA AUGMENT
