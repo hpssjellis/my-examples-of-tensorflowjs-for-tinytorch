@@ -9,7 +9,7 @@
 
 <body>
 
-<h2>ESP32 Vision Trainer (Minimal Fix)</h2>
+<h2>ESP32 Vision Trainer (Training Fixed)</h2>
 
 <video id="myVideo" autoplay playsinline width="320" height="240"></video>
 <br>
@@ -79,30 +79,28 @@ myModel.compile({
 myOutput.textContent = "Model ready\n";
 
 /* =========================
-   IMAGE PIPELINE (MIN FIX)
+   IMAGE PIPELINE (FIXED)
 ========================= */
 
 function myGetInputTensor(){
-  return tf.tidy(() => {
 
-    // Webcam → canvas (editable by students)
-    myCtx.drawImage(
-      document.getElementById("myVideo"),
-      0, 0, 240, 240
-    );
+  // Webcam → canvas (editable by students)
+  myCtx.drawImage(
+    document.getElementById("myVideo"),
+    0, 0, 240, 240
+  );
 
-    // Canvas → tensor
-    let myImg = tf.browser.fromPixels(myCanvas);
+  // Canvas → tensor
+  let myImg = tf.browser.fromPixels(myCanvas);
 
-    // Resize (same as original working version)
-    myImg = tf.image.resizeNearestNeighbor(myImg, [64,64]);
+  // Resize
+  myImg = tf.image.resizeNearestNeighbor(myImg, [64,64]);
 
-    // Normalize
-    myImg = myImg.toFloat().div(255.0);
+  // Normalize
+  myImg = myImg.toFloat().div(255.0);
 
-    // *** CRITICAL FIX: make it 4D ***
-    return myImg.expandDims(0);  // [1,64,64,3]
-  });
+  // Make 4D
+  return myImg.expandDims(0);  // [1,64,64,3]
 }
 
 /* =========================
@@ -112,8 +110,6 @@ function myGetInputTensor(){
 async function myUpdate(){
 
   const myX = myGetInputTensor();
-
-  // Example label (unchanged teaching pattern)
   const myY = tf.tensor2d([[1,0,0]]);
 
   await myModel.fit(myX, myY, {
@@ -134,7 +130,6 @@ async function myUpdate(){
 async function myRun(){
 
   const myX = myGetInputTensor();
-
   const myPred = myModel.predict(myX);
   const myData = await myPred.data();
 
@@ -148,6 +143,9 @@ async function myRun(){
 }
 
 </script>
+
+
+
 
 
 
