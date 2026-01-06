@@ -170,6 +170,8 @@ int myGetWinner() {
 }
 
 // --- 6. IMAGE PROCESSING (240x240 -> 64x64) --- binomial
+
+/*
 void myProcessCamera(camera_fb_t *fb) {
     uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
     if (!rgb) {
@@ -212,7 +214,54 @@ void myProcessCamera(camera_fb_t *fb) {
                             dy * ((1.0f - dx) * rgb[idx10 + c] + dx * rgb[idx11 + c]);
                 
                 // Store normalized result in input buffer
-                myInputBuffer[(y * 64 + x) * 3 + c] = (val + 0.1f) / 255.1f; //[cite: 47, 48]
+                myInputBuffer[(y * 64 + x) * 3 + c] = (val + 0.1f) / 255.1f; 
+
+            }
+        }
+    }
+    free(rgb);
+}
+
+*/
+
+void myProcessCamera(camera_fb_t *fb) {
+    uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgb) { Serial.println("ERROR: RGB buffer allocation failed!"); return; }
+    
+    if (!fmt2rgb888(fb->buf, fb->len, fb->format, rgb)) {
+        Serial.println("ERROR: JPEG decode failed!");
+        free(rgb); return;
+    }
+
+    // Bilinear Scale Factors
+    float scaleY = (float)fb->height / 64.0f;
+    float scaleX = (float)fb->width / 64.0f;
+
+    for (int y = 0; y < 64; y++) {
+        float srcY = (y + 0.5f) * scaleY - 0.5f;
+        int y0 = (int)srcY;
+        int y1 = min(y0 + 1, (int)fb->height - 1);
+        float dy = srcY - y0;
+
+        for (int x = 0; x < 64; x++) {
+            float srcX = (x + 0.5f) * scaleX - 0.5f;
+            int x0 = (int)srcX;
+            int x1 = min(x0 + 1, (int)fb->width - 1);
+            float dx = srcX - x0;
+
+            int idx00 = (y0 * fb->width + x0) * 3;
+            int idx01 = (y0 * fb->width + x1) * 3;
+            int idx10 = (y1 * fb->width + x0) * 3;
+            int idx11 = (y1 * fb->width + x1) * 3;
+
+            for (int c = 0; c < 3; c++) {
+                // 1. Bilinear Interpolation Calculation
+                float val = (1.0f - dy) * ((1.0f - dx) * rgb[idx00 + c] + dx * rgb[idx01 + c]) +
+                            dy * ((1.0f - dx) * rgb[idx10 + c] + dx * rgb[idx11 + c]);
+                
+                // 2. APPLY BIAS HERE (+0.1 / 255.1)
+                // This replaces the old: rgb[sIdx] / 255.0f 
+                myInputBuffer[(y * 64 + x) * 3 + c] = (val + 0.1f) / 255.1f;
             }
         }
     }
