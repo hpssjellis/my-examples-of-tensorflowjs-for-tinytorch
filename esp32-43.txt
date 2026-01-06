@@ -1,0 +1,290 @@
+
+
+
+
+
+
+/*******************************************************
+  Rocksetta Pro – ESP32-S3 Vision Inference Engine
+  Board: Seeed Studio XIAO ESP32S3 Sense
+*******************************************************/
+
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "myModel.h"
+#include <math.h>
+
+/* =====================================================
+   CONFIGURATION
+===================================================== */
+
+#define MY_INPUT_W 64
+#define MY_INPUT_H 64
+#define MY_CHANNELS 3
+
+// ===== PIPELINE SWITCHES =====
+//#define MY_USE_GRAYSCALE
+#define MY_USE_BILINEAR   // <---- comment out for nearest neighbor
+
+#define MY_ACT_CLIP 100.0f
+
+/* =====================================================
+   BUFFERS
+===================================================== */
+
+float myInputBuffer[MY_INPUT_W * MY_INPUT_H * MY_CHANNELS];
+float myConv1Output[62 * 62 * 4];
+float myPool1Output[31 * 31 * 4];
+float myConv2Output[29 * 29 * 8];
+
+/* =====================================================
+   INT8 SUPPORT
+===================================================== */
+#ifdef USE_INT8_MODE
+  #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
+#else
+  #define GET_W(arr, idx, scale) (arr[idx])
+  float myConv1_w_scale=1, myConv1_b_scale=1;
+  float myConv2_w_scale=1, myConv2_b_scale=1;
+  float myOutput_w_scale=1, myOutput_b_scale=1;
+#endif
+
+/* =====================================================
+   CAMERA PINS – XIAO ESP32S3
+===================================================== */
+
+#define XCLK_GPIO_NUM 10
+#define SIOD_GPIO_NUM 40
+#define SIOC_GPIO_NUM 39
+#define Y9_GPIO_NUM   48
+#define Y8_GPIO_NUM   11
+#define Y7_GPIO_NUM   12
+#define Y6_GPIO_NUM   14
+#define Y5_GPIO_NUM   16
+#define Y4_GPIO_NUM   18
+#define Y3_GPIO_NUM   17
+#define Y2_GPIO_NUM   15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+/* =====================================================
+   UTILS
+===================================================== */
+inline float myClip(float v){
+  if (isnan(v) || isinf(v)) return 0;
+  if (v > MY_ACT_CLIP) return MY_ACT_CLIP;
+  if (v < -MY_ACT_CLIP) return -MY_ACT_CLIP;
+  return v;
+}
+
+/* =====================================================
+   IMAGE PIPELINE
+===================================================== */
+void myProcessCamera(camera_fb_t *fb){
+
+  uint8_t *rgb = (uint8_t*)ps_malloc(fb->width * fb->height * 3);
+  if(!rgb) return;
+
+  fmt2rgb888(fb->buf, fb->len, fb->format, rgb);
+
+#ifdef MY_USE_BILINEAR
+  // -------- BILINEAR RESIZE --------
+  float scaleX = (float)(fb->width  - 1) / (MY_INPUT_W  - 1);
+  float scaleY = (float)(fb->height - 1) / (MY_INPUT_H - 1);
+
+  for(int y=0;y<MY_INPUT_H;y++){
+    float srcY = y * scaleY;
+    int y0 = (int)srcY;
+    int y1 = min(y0 + 1, fb->height - 1);
+    float wy = srcY - y0;
+
+    for(int x=0;x<MY_INPUT_W;x++){
+      float srcX = x * scaleX;
+      int x0 = (int)srcX;
+      int x1 = min(x0 + 1, fb->width - 1);
+      float wx = srcX - x0;
+
+      int d = (y*MY_INPUT_W + x) * 3;
+
+      for(int c=0;c<3;c++){
+        float p00 = rgb[(y0*fb->width + x0)*3 + c];
+        float p01 = rgb[(y0*fb->width + x1)*3 + c];
+        float p10 = rgb[(y1*fb->width + x0)*3 + c];
+        float p11 = rgb[(y1*fb->width + x1)*3 + c];
+
+        float top = p00 + wx * (p01 - p00);
+        float bot = p10 + wx * (p11 - p10);
+        float val = top + wy * (bot - top);
+
+#ifdef MY_USE_GRAYSCALE
+        float g = val * (1.0f / 255.0f);
+        myInputBuffer[d] = g;
+        myInputBuffer[d+1] = g;
+        myInputBuffer[d+2] = g;
+#else
+        myInputBuffer[d+c] = val * (1.0f / 255.0f);
+#endif
+      }
+    }
+  }
+
+#else
+  // -------- NEAREST NEIGHBOR --------
+  for(int y=0;y<MY_INPUT_H;y++){
+    int sy = (y * fb->height) / MY_INPUT_H;
+    for(int x=0;x<MY_INPUT_W;x++){
+      int sx = (x * fb->width) / MY_INPUT_W;
+      int s = (sy*fb->width + sx) * 3;
+      int d = (y*MY_INPUT_W + x) * 3;
+
+#ifdef MY_USE_GRAYSCALE
+      float g = (rgb[s] + rgb[s+1] + rgb[s+2]) * (1.0f/765.0f);
+      myInputBuffer[d]   = g;
+      myInputBuffer[d+1] = g;
+      myInputBuffer[d+2] = g;
+#else
+      myInputBuffer[d]   = rgb[s]   * (1.0f/255.0f);
+      myInputBuffer[d+1] = rgb[s+1] * (1.0f/255.0f);
+      myInputBuffer[d+2] = rgb[s+2] * (1.0f/255.0f);
+#endif
+    }
+  }
+#endif
+
+  free(rgb);
+}
+
+/* =====================================================
+   CNN (UNCHANGED FROM PREVIOUS VERSION)
+===================================================== */
+
+void myConv1(){
+  for(int f=0;f<4;f++){
+    int o=f*62*62;
+    for(int y=0;y<62;y++){
+      for(int x=0;x<62;x++){
+        float sum=0;
+        for(int ky=0;ky<3;ky++)
+        for(int kx=0;kx<3;kx++){
+          int p=((y+ky)*64+(x+kx))*3;
+          int w=(f*27)+(ky*9)+(kx*3);
+          sum+=myInputBuffer[p]   * GET_W(myConv1_w,w,myConv1_w_scale);
+          sum+=myInputBuffer[p+1] * GET_W(myConv1_w,w+1,myConv1_w_scale);
+          sum+=myInputBuffer[p+2] * GET_W(myConv1_w,w+2,myConv1_w_scale);
+        }
+        sum+=GET_W(myConv1_b,f,myConv1_b_scale);
+        sum=myClip(sum);
+        myConv1Output[o+y*62+x]=(sum>0)?sum:0;
+      }
+    }
+  }
+}
+
+void myMaxPool1(){
+  for(int f=0;f<4;f++){
+    int in=f*62*62;
+    int out=f*31*31;
+    for(int y=0;y<31;y++)
+    for(int x=0;x<31;x++){
+      int i=(y*2)*62+(x*2);
+      float m=myConv1Output[in+i];
+      m=max(m,myConv1Output[in+i+1]);
+      m=max(m,myConv1Output[in+i+62]);
+      m=max(m,myConv1Output[in+i+63]);
+      myPool1Output[out+y*31+x]=m;
+    }
+  }
+}
+
+void myConv2(){
+  for(int f=0;f<8;f++){
+    int o=f*29*29;
+    for(int y=0;y<29;y++)
+    for(int x=0;x<29;x++){
+      float sum=0;
+      for(int c=0;c<4;c++){
+        int in=c*31*31;
+        for(int ky=0;ky<3;ky++)
+        for(int kx=0;kx<3;kx++){
+          int p=in+(y+ky)*31+(x+kx);
+          int w=(f*108)+(c*27)+(ky*9)+(kx*3);
+          sum+=myPool1Output[p]*GET_W(myConv2_w,w,myConv2_w_scale);
+        }
+      }
+      sum+=GET_W(myConv2_b,f,myConv2_b_scale);
+      sum=myClip(sum);
+      myConv2Output[o+y*29+x]=(sum>0)?sum:0;
+    }
+  }
+}
+
+int myGetWinner(){
+  float l[3]={0,0,0};
+  int n=29*29*8;
+  for(int i=0;i<3;i++){
+    double s=0;
+    for(int j=0;j<n;j++)
+      s+=(double)myConv2Output[j]*GET_W(myOutput_w,i*n+j,myOutput_w_scale);
+    l[i]=myClip(s+GET_W(myOutput_b,i,myOutput_b_scale));
+  }
+  float m=max(l[0],max(l[1],l[2]));
+  float e0=exp(l[0]-m), e1=exp(l[1]-m), e2=exp(l[2]-m);
+  Serial.printf("Probs: [%d%% %d%% %d%%] ",
+    (int)(100*e0/(e0+e1+e2)),
+    (int)(100*e1/(e0+e1+e2)),
+    (int)(100*e2/(e0+e1+e2)));
+  return (e1>e0)?((e2>e1)?2:1):((e2>e0)?2:0);
+}
+
+/* =====================================================
+   SETUP / LOOP
+===================================================== */
+void setup(){
+  Serial.begin(115200);
+  camera_config_t c;
+  c.ledc_channel=LEDC_CHANNEL_0;
+  c.ledc_timer=LEDC_TIMER_0;
+  c.pin_d0=Y2_GPIO_NUM; c.pin_d1=Y3_GPIO_NUM;
+  c.pin_d2=Y4_GPIO_NUM; c.pin_d3=Y5_GPIO_NUM;
+  c.pin_d4=Y6_GPIO_NUM; c.pin_d5=Y7_GPIO_NUM;
+  c.pin_d6=Y8_GPIO_NUM; c.pin_d7=Y9_GPIO_NUM;
+  c.pin_xclk=XCLK_GPIO_NUM;
+  c.pin_pclk=PCLK_GPIO_NUM;
+  c.pin_vsync=VSYNC_GPIO_NUM;
+  c.pin_href=HREF_GPIO_NUM;
+  c.pin_sscb_sda=SIOD_GPIO_NUM;
+  c.pin_sscb_scl=SIOC_GPIO_NUM;
+  c.pin_pwdn=-1;
+  c.pin_reset=-1;
+  c.xclk_freq_hz=10000000;
+  c.frame_size=FRAMESIZE_240X240;
+  c.pixel_format=PIXFORMAT_JPEG;
+  c.fb_location=CAMERA_FB_IN_PSRAM;
+  c.fb_count=1;
+  c.jpeg_quality=12;
+  esp_camera_init(&c);
+
+  Serial.println("ESP32 Vision Engine Ready");
+  Serial.printf("Classes: %s | %s | %s\n",
+    myClassLabels[0],myClassLabels[1],myClassLabels[2]);
+}
+
+void loop(){
+  camera_fb_t *fb=esp_camera_fb_get();
+  if(!fb) return;
+
+  myProcessCamera(fb);
+  esp_camera_fb_return(fb);
+
+  myConv1();
+  myMaxPool1();
+  myConv2();
+  int r=myGetWinner();
+
+  Serial.print("Class: ");
+  Serial.println(myClassLabels[r]);
+  delay(5);
+}
+
+
