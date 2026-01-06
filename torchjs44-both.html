@@ -1,276 +1,162 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Rocksetta Pro – ESP32-Aligned Vision Trainer</title>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+  <meta charset="utf-8">
+  <title>Rocksetta ESP32 Vision Trainer</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
 </head>
 
-<body style="font-family:sans-serif;background:#fdfdfd;padding:10px;">
+<body>
 
-<h2 align="center">Rocksetta Pro – ESP32 Camera-Aligned Vision Trainer</h2>
+<h2>ESP32 Vision – Update & Run (Stable)</h2>
 
-<div id="myCodeSpace">
+<video id="myVideo" autoplay playsinline width="320" height="240"></video>
+<canvas id="myCanvas" width="240" height="240"
+        style="border:1px solid black;"></canvas>
 
-<div style="display:flex;gap:15px;flex-wrap:wrap;justify-content:center;">
-
-<!-- CAMERA + TRAINING -->
-<div style="flex:1;min-width:350px;border:1px solid #ccc;padding:15px;background:white;border-radius:10px;">
-<select id="myCameraSelect" style="width:100%;"></select><br><br>
-
-<div align="center">
-<video id="myVideo1" width="240" height="240" autoplay playsinline
-style="border:2px solid black;background:#000;"></video>
-</div><br>
-
-<input type="button" value="1. Start Camera & Brain"
-onclick="myStartAll()"
-style="width:100%;padding:12px;font-weight:bold;"><hr>
-
-<b>Image Mode</b><br>
-<label><input type="checkbox" id="myGrayToggle"> Use Grayscale (ESP32-friendly)</label>
-<hr>
-
-<b>Training</b><br>
-<div style="display:flex;justify-content:space-between;text-align:center;">
-<div>
-<input type="button" value="Train 0" onclick="myCollect(0)">
-<br><input id="myLabel0" value="Class 0" size="8">
-<br><span id="myCount0">0</span>
-</div>
-<div>
-<input type="button" value="Train 1" onclick="myCollect(1)">
-<br><input id="myLabel1" value="Class 1" size="8">
-<br><span id="myCount1">0</span>
-</div>
-<div>
-<input type="button" value="Train 2" onclick="myCollect(2)">
-<br><input id="myLabel2" value="Class 2" size="8">
-<br><span id="myCount2">0</span>
-</div>
-</div>
-</div>
-
-<!-- STATUS -->
-<div style="flex:1;min-width:350px;border:2px solid green;padding:15px;background:#f1f8e9;border-radius:10px;">
-<b>Training Status</b><hr>
-Batches: <span id="myEpochDisplay">0</span><br>
-Avg Loss: <span id="myLossDisplay">--</span><br>
-Status: <span id="myStatusDisplay">Waiting</span>
-<hr>
-
-<label><input type="checkbox" id="myInt8Toggle"> Export Int8</label><br><br>
-<input id="myExportName" value="myModel" style="width:70%;"> .h<br><br>
-<input type="button" value="GENERATE HEADER"
-onclick="myExportHeader()"
-style="width:100%;padding:12px;background:#4CAF50;color:white;">
 <br><br>
-<div id="myOutputDisplay">---</div>
-</div>
 
-<!-- LOG -->
-<div style="flex:1;min-width:350px;border:1px solid #ccc;padding:15px;background:white;border-radius:10px;">
-<b>Logs</b><hr>
-<div id="myDivHistory"
-style="height:300px;overflow:auto;font-family:monospace;font-size:12px;background:#eef;">
-</div>
-</div>
+<input type="button" value="Update (Train)"
+ onclick="myUpdateModel()">
 
-</div>
+<input type="button" value="Run (Predict)"
+ onclick="myRunModel()">
+
+<pre id="myLog"></pre>
 
 <script>
-/* =========================
-   GLOBALS
-========================= */
-var myModel;
-var myTrainData = {0:[],1:[],2:[]};
-var myEpoch = 0;
-var myLossSum = 0;
-var myLossCount = 0;
-var myTimer;
 
-/* =========================
-   LOGGING
-========================= */
-function myLog(m){
-  myDivHistory.innerHTML =
-    "["+new Date().toLocaleTimeString()+"] "+m+"<br>"+myDivHistory.innerHTML;
+let myModel;
+let myLog = document.getElementById("myLog");
+let myCanvas = document.getElementById("myCanvas");
+let myCtx = myCanvas.getContext("2d");
+
+/* ===============================
+   CAMERA
+================================ */
+
+async function myStartCamera(){
+  const myStream = await navigator.mediaDevices.getUserMedia({ video:true });
+  document.getElementById("myVideo").srcObject = myStream;
+}
+myStartCamera();
+
+/* ===============================
+   MODEL
+================================ */
+
+async function myCreateModel(){
+  myModel = tf.sequential();
+
+  myModel.add(tf.layers.conv2d({
+    inputShape:[64,64,3],
+    filters:4,
+    kernelSize:3,
+    activation:'relu'
+  }));
+
+  myModel.add(tf.layers.maxPooling2d({poolSize:2}));
+
+  myModel.add(tf.layers.conv2d({
+    filters:8,
+    kernelSize:3,
+    activation:'relu'
+  }));
+
+  myModel.add(tf.layers.flatten());
+
+  myModel.add(tf.layers.dense({
+    units:3,
+    activation:'softmax'
+  }));
+
+  myModel.compile({
+    optimizer:'adam',
+    loss:'categoricalCrossentropy',
+    metrics:['accuracy']
+  });
+
+  myLog.textContent = "Model created\n";
 }
 
-/* =========================
-   NEAREST-NEIGHBOR RESIZE
-   (ESP32-MATCHING)
-========================= */
-function myResizeNN(myTensor){
+myCreateModel();
+
+/* ===============================
+   IMAGE PIPELINE (CRITICAL)
+================================ */
+
+function myPrepareImage(){
   return tf.tidy(() => {
 
-    const myH = myTensor.shape[0];
-    const myW = myTensor.shape[1];
+    // Draw webcam to canvas
+    myCtx.drawImage(
+      document.getElementById("myVideo"),
+      0,0,240,240
+    );
 
-    let myRows = [];
+    // Canvas → Tensor
+    const myImage =
+      tf.browser.fromPixels(myCanvas);
 
-    for (let y = 0; y < 64; y++) {
-      const mySy = Math.floor(y * myH / 64);
-      let myRow = [];
+    // Resize EXACTLY like ESP32 NN
+    const myResized =
+      tf.image.resizeNearestNeighbor(
+        myImage, [64,64]
+      );
 
-      for (let x = 0; x < 64; x++) {
-        const mySx = Math.floor(x * myW / 64);
-        myRow.push(
-          myTensor.slice([mySy, mySx, 0], [1, 1, 3])
-        );
-      }
-
-      // Concatenate pixels horizontally → [1, 64, 3]
-      myRows.push(tf.concat(myRow, 1));
-    }
-
-    // Stack rows vertically → [64, 64, 3]
-    return tf.concat(myRows, 0);
+    // Normalize
+    return myResized
+      .toFloat()
+      .div(255.0)
+      .expandDims(0);   // [1,64,64,3]
   });
 }
 
+/* ===============================
+   UPDATE (TRAIN)
+================================ */
 
-/* =========================
-   SIMPLE CAMERA AUGMENT
-========================= */
-function myAugment(t){
-  return tf.tidy(()=>{
-    let x=t;
-    if(Math.random()<0.3){
-      x=x.add((Math.random()-0.5)*0.05).clipByValue(0,1);
-    }
-    return x;
+async function myUpdateModel(){
+
+  const myX = myPrepareImage();
+
+  // Fake label for teaching demo
+  const myY = tf.tensor2d([[1,0,0]]);
+
+  await myModel.fit(myX,myY,{
+    epochs:1,
+    batchSize:1
   });
+
+  myLog.textContent += "Updated\n";
+
+  myX.dispose();
+  myY.dispose();
 }
 
-/* =========================
-   START
-========================= */
-async function myStartAll(){
-  if(!myVideo1.srcObject){
-    myVideo1.srcObject = await navigator.mediaDevices.getUserMedia({video:{width:240,height:240}});
-    myLog("Camera started");
-  }
+/* ===============================
+   RUN (PREDICT)
+================================ */
 
-  if(!myModel){
-    myModel=tf.sequential();
-    myModel.add(tf.layers.conv2d({inputShape:[64,64,3],filters:4,kernelSize:3,activation:'relu'}));
-    myModel.add(tf.layers.maxPooling2d({poolSize:2}));
-    myModel.add(tf.layers.conv2d({filters:8,kernelSize:3,activation:'relu'}));
-    myModel.add(tf.layers.flatten());
-    myModel.add(tf.layers.dense({units:3,activation:'softmax'}));
-    myModel.compile({optimizer:tf.train.adam(0.001),loss:'categoricalCrossentropy'});
-    myLog("Model ready");
-  }
+async function myRunModel(){
 
-  clearInterval(myTimer);
-  myTimer=setInterval(myLoop,150);
+  const myX = myPrepareImage();
+
+  const myPrediction = myModel.predict(myX);
+  const myData = await myPrediction.data();
+
+  myLog.textContent +=
+    `Predict → ${Math.round(myData[0]*100)}% `
+    +`${Math.round(myData[1]*100)}% `
+    +`${Math.round(myData[2]*100)}%\n`;
+
+  myX.dispose();
+  myPrediction.dispose();
 }
 
-/* =========================
-   MAIN LOOP
-========================= */
-async function myLoop(){
-  const raw=tf.browser.fromPixels(myVideo1).div(255);
-  let img=myResizeNN(raw);
-
-  if(myGrayToggle.checked){
-    img=tf.mean(img,2).expandDims(2).tile([1,1,3]);
-  }
-
-  const input=img.expandDims(0);
-  const pred=myModel.predict(input);
-  const p=await pred.data();
-  const id=p.indexOf(Math.max(...p));
-
-  myOutputDisplay.innerHTML=
-    myLabel0.value+": "+(p[0]*100).toFixed(1)+"%<br>"+
-    myLabel1.value+": "+(p[1]*100).toFixed(1)+"%<br>"+
-    myLabel2.value+": "+(p[2]*100).toFixed(1)+"%";
-
-  input.dispose();pred.dispose();raw.dispose();img.dispose();
-
-  if(Math.min(
-    myTrainData[0].length,
-    myTrainData[1].length,
-    myTrainData[2].length)>=8){
-
-    let xs=[],ys=[];
-    for(let c=0;c<3;c++){
-      const s=myTrainData[c][Math.floor(Math.random()*myTrainData[c].length)];
-      xs.push(myAugment(s));
-      ys.push(c==0?[1,0,0]:c==1?[0,1,0]:[0,0,1]);
-    }
-
-    const bx=tf.concat(xs);
-    const by=tf.tensor2d(ys);
-
-    const loss=await myModel.trainOnBatch(bx,by);
-    myEpoch++;
-    myEpochDisplay.innerText=myEpoch;
-
-    myLossSum+=loss;myLossCount++;
-    myLossDisplay.innerText=(myLossSum/myLossCount).toFixed(4);
-
-    bx.dispose();by.dispose();xs.forEach(t=>t.dispose());
-  }
-}
-
-/* =========================
-   COLLECT
-========================= */
-function myCollect(c){
-  const raw=tf.browser.fromPixels(myVideo1).div(255);
-  let img=myResizeNN(raw);
-  if(myGrayToggle.checked){
-    img=tf.mean(img,2).expandDims(2).tile([1,1,3]);
-  }
-  myTrainData[c].push(img);
-  document.getElementById("myCount"+c).innerText=myTrainData[c].length;
-  raw.dispose();
-}
-
-/* =========================
-   EXPORT (unchanged logic)
-========================= */
-async function myExportHeader(){
-  alert("Export logic unchanged – uses same pipeline as before");
-}
 </script>
-</div>
 
-<hr>
-
-<input id="myUpdateBtn" type="button" value="Update & Run Code"
-style="visibility:hidden;"
-onclick="myApplyAndRun()">
-
-<textarea id="myTextarea1" rows="2" style="width:95%;background:black;color:white;"
-onclick="myToggleEditor()">Click to view source</textarea>
-
-<script>
-let myOnce=true;
-function myToggleEditor(){
-  if(myOnce){
-    myTextarea1.value="<script src=tfjs>\\n"+myCodeSpace.innerHTML;
-    myTextarea1.rows=20;
-    myUpdateBtn.style.visibility="visible";
-    myOnce=false;
-  }
-}
-function myApplyAndRun(){
-  myCodeSpace.innerHTML=myTextarea1.value;
-  myStartAll();
-}
-(async()=>{
-  const d=await navigator.mediaDevices.enumerateDevices();
-  d.filter(x=>x.kind=="videoinput").forEach((x,i)=>{
-    const o=document.createElement("option");
-    o.value=x.deviceId;o.text=x.label||("Cam "+i);
-    myCameraSelect.appendChild(o);
-  });
-})();
-</script>
 
 
 
