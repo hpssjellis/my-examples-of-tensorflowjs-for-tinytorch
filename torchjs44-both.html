@@ -2,157 +2,149 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Rocksetta ESP32 Vision Trainer</title>
+  <title>ESP32 Vision – Update & Run</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
 </head>
 
 <body>
 
-<h2>ESP32 Vision – Update & Run (Stable)</h2>
+<h2>ESP32 Vision Trainer (Minimal Fix)</h2>
 
 <video id="myVideo" autoplay playsinline width="320" height="240"></video>
+<br>
 <canvas id="myCanvas" width="240" height="240"
         style="border:1px solid black;"></canvas>
 
 <br><br>
 
 <input type="button" value="Update (Train)"
- onclick="myUpdateModel()">
+ onclick="myUpdate()">
 
 <input type="button" value="Run (Predict)"
- onclick="myRunModel()">
+ onclick="myRun()">
 
-<pre id="myLog"></pre>
+<pre id="myOutput"></pre>
 
 <script>
 
 let myModel;
-let myLog = document.getElementById("myLog");
 let myCanvas = document.getElementById("myCanvas");
 let myCtx = myCanvas.getContext("2d");
+let myOutput = document.getElementById("myOutput");
 
-/* ===============================
+/* =========================
    CAMERA
-================================ */
+========================= */
 
-async function myStartCamera(){
-  const myStream = await navigator.mediaDevices.getUserMedia({ video:true });
+navigator.mediaDevices.getUserMedia({ video:true })
+.then(myStream => {
   document.getElementById("myVideo").srcObject = myStream;
-}
-myStartCamera();
+});
 
-/* ===============================
-   MODEL
-================================ */
+/* =========================
+   MODEL (UNCHANGED)
+========================= */
 
-async function myCreateModel(){
-  myModel = tf.sequential();
+myModel = tf.sequential();
 
-  myModel.add(tf.layers.conv2d({
-    inputShape:[64,64,3],
-    filters:4,
-    kernelSize:3,
-    activation:'relu'
-  }));
+myModel.add(tf.layers.conv2d({
+  inputShape:[64,64,3],
+  filters:4,
+  kernelSize:3,
+  activation:'relu'
+}));
 
-  myModel.add(tf.layers.maxPooling2d({poolSize:2}));
+myModel.add(tf.layers.maxPooling2d({poolSize:2}));
 
-  myModel.add(tf.layers.conv2d({
-    filters:8,
-    kernelSize:3,
-    activation:'relu'
-  }));
+myModel.add(tf.layers.conv2d({
+  filters:8,
+  kernelSize:3,
+  activation:'relu'
+}));
 
-  myModel.add(tf.layers.flatten());
+myModel.add(tf.layers.flatten());
 
-  myModel.add(tf.layers.dense({
-    units:3,
-    activation:'softmax'
-  }));
+myModel.add(tf.layers.dense({
+  units:3,
+  activation:'softmax'
+}));
 
-  myModel.compile({
-    optimizer:'adam',
-    loss:'categoricalCrossentropy',
-    metrics:['accuracy']
-  });
+myModel.compile({
+  optimizer:'adam',
+  loss:'categoricalCrossentropy',
+  metrics:['accuracy']
+});
 
-  myLog.textContent = "Model created\n";
-}
+myOutput.textContent = "Model ready\n";
 
-myCreateModel();
+/* =========================
+   IMAGE PIPELINE (MIN FIX)
+========================= */
 
-/* ===============================
-   IMAGE PIPELINE (CRITICAL)
-================================ */
-
-function myPrepareImage(){
+function myGetInputTensor(){
   return tf.tidy(() => {
 
-    // Draw webcam to canvas
+    // Webcam → canvas (editable by students)
     myCtx.drawImage(
       document.getElementById("myVideo"),
-      0,0,240,240
+      0, 0, 240, 240
     );
 
-    // Canvas → Tensor
-    const myImage =
-      tf.browser.fromPixels(myCanvas);
+    // Canvas → tensor
+    let myImg = tf.browser.fromPixels(myCanvas);
 
-    // Resize EXACTLY like ESP32 NN
-    const myResized =
-      tf.image.resizeNearestNeighbor(
-        myImage, [64,64]
-      );
+    // Resize (same as original working version)
+    myImg = tf.image.resizeNearestNeighbor(myImg, [64,64]);
 
     // Normalize
-    return myResized
-      .toFloat()
-      .div(255.0)
-      .expandDims(0);   // [1,64,64,3]
+    myImg = myImg.toFloat().div(255.0);
+
+    // *** CRITICAL FIX: make it 4D ***
+    return myImg.expandDims(0);  // [1,64,64,3]
   });
 }
 
-/* ===============================
+/* =========================
    UPDATE (TRAIN)
-================================ */
+========================= */
 
-async function myUpdateModel(){
+async function myUpdate(){
 
-  const myX = myPrepareImage();
+  const myX = myGetInputTensor();
 
-  // Fake label for teaching demo
+  // Example label (unchanged teaching pattern)
   const myY = tf.tensor2d([[1,0,0]]);
 
-  await myModel.fit(myX,myY,{
+  await myModel.fit(myX, myY, {
     epochs:1,
     batchSize:1
   });
 
-  myLog.textContent += "Updated\n";
+  myOutput.textContent += "Updated\n";
 
   myX.dispose();
   myY.dispose();
 }
 
-/* ===============================
+/* =========================
    RUN (PREDICT)
-================================ */
+========================= */
 
-async function myRunModel(){
+async function myRun(){
 
-  const myX = myPrepareImage();
+  const myX = myGetInputTensor();
 
-  const myPrediction = myModel.predict(myX);
-  const myData = await myPrediction.data();
+  const myPred = myModel.predict(myX);
+  const myData = await myPred.data();
 
-  myLog.textContent +=
-    `Predict → ${Math.round(myData[0]*100)}% `
-    +`${Math.round(myData[1]*100)}% `
-    +`${Math.round(myData[2]*100)}%\n`;
+  myOutput.textContent +=
+    `Run → ${Math.round(myData[0]*100)}% `
+   +`${Math.round(myData[1]*100)}% `
+   +`${Math.round(myData[2]*100)}%\n`;
 
   myX.dispose();
-  myPrediction.dispose();
+  myPred.dispose();
 }
 
 </script>
