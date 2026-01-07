@@ -14,10 +14,11 @@ This page is trying to simplify for High School students and non-engineering und
 It does not reach the same extent of total understanding of the system, but is a half way point between just using machine learning and TinyTorch understanding. <br>
 
 
-<h1> Donate to the openCollective!</h1>
+<h1>Reminder to donate to the openCollective!</h1>
+
 [opencollective.com/mlsysbook](https://opencollective.com/mlsysbook) <br>
 
-<img width="489" height="477" alt="image" src="https://github.com/user-attachments/assets/a2e3dc57-f9cc-45ee-a998-91cf55509038" />
+[<img width="489" height="477" alt="image" src="https://github.com/user-attachments/assets/a2e3dc57-f9cc-45ee-a998-91cf55509038" />](https://opencollective.com/mlsysbook)
 
 
 <h3>ML  map</h3>
