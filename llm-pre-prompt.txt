@@ -1,0 +1,59 @@
+# Code Style & Requirements for Rocksetta Pro ML Trainer
+
+## Naming Conventions
+- All variable and function names MUST start with "my" prefix (e.g., myModel, myStartAll, myTrainData)
+- Use camelCase for all names (e.g., myEpochCount, myLoadImages, myIsGrayscaleMode)
+- Keep names descriptive but concise
+
+## Code Philosophy
+- Write SIMPLE, educational code that high school students can understand
+- Avoid complex abstractions - prefer explicit, linear logic
+- Comment tricky sections but keep code self-documenting through clear naming
+- Prioritize readability over cleverness
+
+## Critical Features to Preserve
+- **"Update & Run Code" button**: Must allow editing of THE ENTIRE PAGE including all HTML, CSS, and JavaScript. The textarea must contain complete source when expanded.
+- **Self-contained design**: Everything in one HTML file - no external dependencies except CDN libraries
+- **Memory management**: Always dispose TensorFlow.js tensors after use to prevent memory leaks
+- **Error handling**: Validate data (check for NaN, Infinity) before processing
+- **User feedback**: Log all important actions to myDivHistory with timestamps
+
+## Architecture Rules
+- Keep the three-panel layout (Camera/Training | Progress/Export | Logs)
+- Maintain overflow protection (clipValue, weight clipping, NaN checks)
+- Preserve the training loop structure with pause/resume capability
+- Keep analysis separate from training (Stop/Start Analysis buttons)
+
+## DO NOT Change Unless Asked
+- The CNN architecture (2 conv layers, pooling, dropout, dense)
+- The export header file format (must work with existing ESP32 code)
+- The myAugment() data augmentation approach
+- The balanced batch sampling (2 samples per class)
+- The max buffer limit of 100 samples per class
+
+## When Adding Features
+- Test that "Update & Run Code" button still works
+- Ensure all new tensors are properly disposed
+- Add appropriate logging with myLog()
+- Validate all numeric inputs for NaN/Infinity
+- Keep UI elements consistent with existing style
+
+## Grayscale Mode Requirements
+- Grayscale checkbox MUST be set BEFORE starting Camera & Brain
+- Prevent changing modes mid-training (show warning)
+- Convert images using luminance formula: 0.299*R + 0.587*G + 0.114*B
+- Model architecture must match training mode (1-channel vs 3-channel input)
+- Export validation: only allow grayscale export if trained in grayscale mode
+
+## Common Patterns to Follow
+- Button onclick handlers: onclick="myFunctionName()"
+- Async functions for camera/model operations
+- tf.tidy() for temporary tensor operations
+- Status updates every 10 batches during training
+- Color-coded confidence display (green > 80%, orange > 50%, red < 50%)
+
+## Student-Friendly Goals
+- Students should be able to read any function and understand what it does
+- Avoid nested callbacks - use async/await
+- One responsibility per function when possible
+- Explicit rather than implicit behavior
