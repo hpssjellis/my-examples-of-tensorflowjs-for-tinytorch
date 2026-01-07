@@ -1,0 +1,1365 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body style="font-family: sans-serif; background-color: #fdfdfd; padding: 10px;">
+
+<h2 align="center">Rocksetta Pro: Overflow-Protected Optimizer</h2>
+
+<div id="myCodeSpace"> 
+  <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
+    
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <label style="font-weight: bold; color: darkblue; cursor: pointer; display: block; margin-bottom: 8px;">
+        <input type="checkbox" id="myGrayscaleToggle" onchange="myCheckGrayscaleChange()"> Use Grayscale Mode
+      </label>
+      <p style="font-size: 11px; margin-top: -5px; color: #666;">(Set BEFORE starting - 3x smaller model, needs MORE data & training)</p>
+      <select id="myCameraSelect" style="width: 100%; margin-bottom: 5px;"></select>
+      <div align="center">
+          <video id="myVideo1" width="240" height="240" autoplay playsinline style="border: 2px solid black; background: #000; border-radius: 5px;"></video>
+          <canvas id="myCanvas1" width="240" height="240" style="display:none; border: 2px solid black; border-radius: 5px;"></canvas>
+      </div>
+      <br>
+      <input type="button" value="1. Start Camera & Brain" onclick="myStartAll()" style="width:100%; font-weight:bold; padding:12px; background:#e1f5fe; border-radius: 5px; cursor:pointer;">
+      <hr>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+        <span><b>Max Buffer:</b></span>
+        <input type="number" id="myMaxBufferInput" value="100" min="10" max="500" style="width: 80px; padding: 2px;" title="Max samples stored per class" onchange="myUpdateMaxBuffer()">
+      </div>
+      <p style="font-size: 11px; margin-top: -5px; color: #666;">(Samples per class - higher = more memory)</p>
+      <hr>
+      <div style="display: flex; justify-content: space-between;">
+          <input type="button" value="Save TFJS" onclick="mySaveModel()" style="width:48%;">
+          <input type="button" value="Load TFJS" onclick="myLoadModel()" style="width:48%;">
+      </div>
+      <hr>
+      <b>Training:</b><br>
+      <div style="display: flex; justify-content: space-between; margin-top:5px; text-align:center;">
+        <div style="flex:1;">
+          <input type="button" value="Train 0" onclick="myCollect(0)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(0)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(0)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="text" id="myLabel0" value="Class 0" size="8" style="margin-top:3px;">
+          <br><span id="myCount0" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+        <div style="flex:1;">
+          <input type="button" value="Train 1" onclick="myCollect(1)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(1)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(1)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="text" id="myLabel1" value="Class 1" size="8" style="margin-top:3px;">
+          <br><span id="myCount1" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+        <div style="flex:1;">
+          <input type="button" value="Train 2" onclick="myCollect(2)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(2)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(2)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="text" id="myLabel2" value="Class 2" size="8" style="margin-top:3px;">
+          <br><span id="myCount2" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
+      <b>2. Training Progress</b><hr>
+      <div style="background: white; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span><b>Batches Trained:</b></span>
+          <span id="myEpochDisplay" style="font-weight: bold; color: #2196F3;">0</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Min Samples:</b></span>
+          <input type="number" id="myMinSamples" value="10" min="1" max="100" style="width: 80px; padding: 2px;" title="Minimum samples per class before training">
+        </div>
+        <div style="margin-bottom: 5px;">
+          <label style="cursor: pointer;">
+            <input type="checkbox" id="myUseAllData" checked onchange="myToggleEpochMode()"> Use All Data (systematic epochs)
+          </label>
+        </div>
+        <div id="myEpochControls" style="display: block;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+            <span><b>Target Epochs:</b></span>
+            <input type="number" id="myTargetEpochs" value="10" min="0" step="0.5" style="width: 80px; padding: 2px;" title="0 = Train Forever">
+          </div>
+          <p id="myEpochHint" style="font-size: 11px; margin: -3px 0 5px 0; color: #666;"></p>
+        </div>
+        <div id="myBatchControls" style="display: none;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+            <span><b>Max Batches:</b></span>
+            <input type="number" id="myMaxBatches" value="40" min="0" style="width: 80px; padding: 2px;" title="0 = Train Forever">
+          </div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Batch Size:</b></span>
+          <input type="number" id="myBatchSize" value="6" min="3" max="30" step="3" style="width: 80px; padding: 2px;" title="Total samples per batch (multiple of 3)">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Learning Rate:</b></span>
+          <input type="number" id="myLearningRate" value="0.001" min="0.0001" max="0.1" step="0.0001" style="width: 80px; padding: 2px;" title="How fast the model learns">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span><b>Avg Loss:</b></span>
+          <span id="myLossDisplay" style="font-weight: bold; color: #FF9800;">--</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span><b>Training Status:</b></span>
+          <span id="myStatusDisplay" style="font-weight: bold; color: #9E9E9E;">Waiting...</span>
+        </div>
+        <div style="margin-top: 10px; display: flex; gap: 5px;">
+          <input type="button" id="myPauseBtn" value="⏸ Pause Training" onclick="myPauseTraining()" style="flex: 1; padding: 8px; background: #FF9800; color: white; font-weight: bold; border-radius: 5px; cursor: pointer;" disabled>
+          <input type="button" id="myResumeBtn" value="▶ Resume Training" onclick="myResumeTraining()" style="flex: 1; padding: 8px; background: #4CAF50; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">
+        </div>
+        <div style="margin-top: 10px; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
+          <div id="myProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); transition: width 0.3s;"></div>
+        </div>
+      </div>
+      <hr>
+      <b>Edge AI Export</b><br>
+      <label style="font-weight: bold; color: darkgreen; cursor: pointer;">
+        <input type="checkbox" id="myInt8Toggle"> Use Int8 Quantization
+      </label>
+      <p style="font-size: 11px;">(Saves memory on ESP32)</p>
+      <b>Export Name:</b><br>
+      <input type="text" id="myExportName" value="myModel" style="width:70%;"> .h
+      <br><br>
+      <input type="button" value="GENERATE (.h)" style="background-color:#4CAF50; color:white; width:100%; padding:15px; font-weight:bold; border-radius: 5px; cursor:pointer;" onclick="myExportHeader()">
+      <hr>
+      <div style="margin-bottom: 10px; display: flex; gap: 5px;">
+        <input type="button" id="myStopAnalysisBtn" value="⏹ Stop Analysis" onclick="myStopAnalysis()" style="flex: 1; padding: 8px; background: #F44336; color: white; font-weight: bold; border-radius: 5px; cursor: pointer;" disabled>
+        <input type="button" id="myStartAnalysisBtn" value="▶ Start Analysis" onclick="myStartAnalysis()" style="flex: 1; padding: 8px; background: #2196F3; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">
+      </div>
+      <div id="myOutputDisplay" style="border: 1px solid green; padding: 10px; background: white; min-height: 50px;">Ready...</div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <b>3. Activity Logs</b><hr>
+      <div id="myDivHistory" style="border: 1px solid blue; padding: 8px; height: 300px; overflow-y: scroll; font-family: monospace; font-size: 0.85em; background: #f1f8ff; border-radius: 5px;">
+        Logs will appear here...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var myModel, myTimer, myLastID = -1;
+    var myTrainData = {0:[], 1:[], 2:[]};
+    var myMaxBuffer = 100;
+    var myEpochCount = 0;
+    var myLossHistory = [];
+    var myAccuracyHistory = [];
+    var myLossSum = 0;
+    var myLossCount = 0;
+    var myTrainingPaused = false;
+    var myAnalysisStopped = false;
+    var myIsGrayscaleMode = false;
+    var myGrayscaleRenderTimer = null;
+    var myAllDataIndex = 0;
+    var myCurrentEpoch = 0;
+    var myShuffledData = [];  // Cache shuffled data
+
+    function myLog(myMsg) {
+        const myDiv = document.getElementById('myDivHistory');
+        const myTime = new Date().toLocaleTimeString();
+        myDiv.innerHTML = `[${myTime}] ${myMsg}<br>` + myDiv.innerHTML;
+    }
+
+    function myUpdateMaxBuffer() {
+      myMaxBuffer = parseInt(document.getElementById('myMaxBufferInput').value) || 100;
+      myLog(`Max buffer updated to ${myMaxBuffer} samples per class`);
+    }
+
+    function myToggleEpochMode() {
+      const useAllData = document.getElementById('myUseAllData').checked;
+      document.getElementById('myEpochControls').style.display = useAllData ? 'block' : 'none';
+      document.getElementById('myBatchControls').style.display = useAllData ? 'none' : 'block';
+      myUpdateEpochHint();
+    }
+
+    function myUpdateEpochHint() {
+      if (!document.getElementById('myUseAllData').checked) return;
+      
+      const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+      const totalSamples = counts[0] + counts[1] + counts[2];
+      const batchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
+      const batchesPerEpoch = Math.ceil(totalSamples / batchSize);
+      const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 10;
+      const totalBatches = Math.ceil(targetEpochs * batchesPerEpoch);
+      
+      if (totalSamples > 0) {
+        document.getElementById('myEpochHint').innerText = 
+          `(≈ ${batchesPerEpoch} batches/epoch = ${totalBatches} total batches)`;
+      } else {
+        document.getElementById('myEpochHint').innerText = '(Waiting for training data...)';
+      }
+    }
+
+    function myAugment(tensor) {
+      return tf.tidy(() => {
+        let augmented = tensor;
+        
+        if (Math.random() > 0.5) {
+          const brightness = (Math.random() - 0.5) * 0.2;
+          augmented = augmented.add(brightness).clipByValue(0, 1);
+        }
+        
+        if (Math.random() > 0.5) {
+          const contrast = 0.8 + Math.random() * 0.4;
+          const mean = augmented.mean();
+          augmented = augmented.sub(mean).mul(contrast).add(mean).clipByValue(0, 1);
+        }
+        
+        return augmented;
+      });
+    }
+
+    function myStopAnalysis() {
+      myAnalysisStopped = true;
+      document.getElementById('myStopAnalysisBtn').style.display = 'none';
+      document.getElementById('myStartAnalysisBtn').style.display = 'block';
+      document.getElementById('myOutputDisplay').innerHTML = '<span style="color:#666;">Analysis Stopped</span>';
+      myLog("Analysis Stopped - Reduced resource usage");
+    }
+
+    function myStartAnalysis() {
+      myAnalysisStopped = false;
+      document.getElementById('myStopAnalysisBtn').style.display = 'block';
+      document.getElementById('myStartAnalysisBtn').style.display = 'none';
+      document.getElementById('myOutputDisplay').innerHTML = 'Analyzing...';
+      myLog("Analysis Started");
+    }
+
+    function myCheckGrayscaleChange() {
+      if (myModel) {
+        alert('⚠️ Changing color mode requires restarting Camera & Brain.\n\nPlease refresh the page or clear all training data to switch modes.');
+        document.getElementById('myGrayscaleToggle').checked = myIsGrayscaleMode;
+      } else if (document.getElementById('myGrayscaleToggle').checked) {
+        myLog("NOTE: Grayscale mode enabled. Recommend: 20+ samples/class, 80-100 batches, learning rate 0.002-0.003");
+      }
+    }
+
+    async function myStartAll() {
+      const myVideo = document.getElementById('myVideo1');
+      const myCanvas = document.getElementById('myCanvas1');
+      const myCtx = myCanvas.getContext('2d');
+      
+      if (!myVideo.srcObject) {
+        const myDeviceId = document.getElementById('myCameraSelect').value;
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({video: { width: 240, height: 240, deviceId: myDeviceId ? { exact: myDeviceId } : undefined }});
+        myLog("Camera Started");
+        
+        // Setup grayscale video preview if needed
+        myIsGrayscaleMode = document.getElementById('myGrayscaleToggle').checked;
+        if (myIsGrayscaleMode) {
+          myVideo.style.display = 'none';
+          myCanvas.style.display = 'block';
+          
+          // Render grayscale video preview
+          if (myGrayscaleRenderTimer) clearInterval(myGrayscaleRenderTimer);
+          myGrayscaleRenderTimer = setInterval(() => {
+            myCtx.drawImage(myVideo, 0, 0, 240, 240);
+            const myImageData = myCtx.getImageData(0, 0, 240, 240);
+            const myData = myImageData.data;
+            
+            for (let i = 0; i < myData.length; i += 4) {
+              const myGray = myData[i] * 0.299 + myData[i+1] * 0.587 + myData[i+2] * 0.114;
+              myData[i] = myGray;
+              myData[i+1] = myGray;
+              myData[i+2] = myGray;
+            }
+            myCtx.putImageData(myImageData, 0, 0);
+          }, 33);
+        } else {
+          myVideo.style.display = 'block';
+          myCanvas.style.display = 'none';
+        }
+      }
+      
+      if (!myModel) {
+        const inputChannels = myIsGrayscaleMode ? 1 : 3;
+        const myCurrentLearningRate = parseFloat(document.getElementById('myLearningRate').value) || 0.001;
+        
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({
+          inputShape:[64,64,inputChannels], 
+          kernelSize:3, 
+          filters:4, 
+          activation:'relu',
+          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}),  // Much weaker!
+          biasInitializer: 'zeros'
+        }));
+        myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
+        myModel.add(tf.layers.conv2d({
+          kernelSize:3, 
+          filters:8, 
+          activation:'relu',
+          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}),  // Much weaker!
+          biasInitializer: 'zeros'
+        }));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dropout({rate: 0.3}));
+        myModel.add(tf.layers.dense({
+          units:3, 
+          activation:'softmax',
+          // NO regularization on output layer for small datasets!
+          kernelInitializer: 'heNormal',
+          biasInitializer: 'zeros'
+        }));
+        
+        myModel.compile({
+          optimizer: tf.train.adam(myCurrentLearningRate), 
+          loss:'categoricalCrossentropy',
+          metrics: ['accuracy']
+        });
+        myLog(`Brain Initialized (${myIsGrayscaleMode ? 'Grayscale' : 'RGB'} 2-Layer CNN, LR: ${myCurrentLearningRate})`);
+      }
+
+      if (myTimer) clearInterval(myTimer);
+      myTimer = setInterval(async () => {
+        let myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]);
+        
+        // Convert to grayscale if in grayscale mode
+        if (myIsGrayscaleMode) {
+          const myOldInput = myInput;
+          myInput = tf.tidy(() => {
+            const r = myOldInput.slice([0, 0, 0], [64, 64, 1]);
+            const g = myOldInput.slice([0, 0, 1], [64, 64, 1]);
+            const b = myOldInput.slice([0, 0, 2], [64, 64, 1]);
+            return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+          });
+          myOldInput.dispose();
+        }
+        
+        const myOldInput2 = myInput;
+        myInput = myInput.div(255.0).expandDims(0);
+        myOldInput2.dispose();
+        
+        const minSamples = parseInt(document.getElementById('myMinSamples').value) || 10;
+        const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+        const minCount = Math.min(...counts);
+        const maxCount = Math.max(...counts);
+        
+        // Calculate max batches based on mode
+        const myUseAllData = document.getElementById('myUseAllData').checked;
+        let maxBatches = 0;
+        
+        if (myUseAllData) {
+          const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
+          const totalSamples = counts[0] + counts[1] + counts[2];
+          const batchesPerEpoch = totalSamples > 0 ? Math.ceil(totalSamples / myBatchSize) : 1;
+          maxBatches = targetEpochs > 0 ? Math.ceil(targetEpochs * batchesPerEpoch) : 0;
+        } else {
+          maxBatches = parseInt(document.getElementById('myMaxBatches').value) || 0;
+        }
+        
+        const reachedLimit = maxBatches > 0 && myEpochCount >= maxBatches;
+        
+        // Get batch size and calculate samples per class
+        let myBatchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
+        if (myBatchSize < 3) myBatchSize = 3;
+        if (myBatchSize % 3 !== 0) myBatchSize = Math.ceil(myBatchSize / 3) * 3;
+        const mySamplesPerClass = myBatchSize / 3;
+        
+        if (minCount >= minSamples && !myTrainingPaused && !reachedLimit) {
+          if (maxCount > minCount * 2) {
+            if (Math.random() < 0.01) {
+              myLog(`WARNING: Imbalanced data [${counts[0]}, ${counts[1]}, ${counts[2]}]`);
+            }
+          }
+          
+          let myBatch = [];
+          let myLabels = [];
+          
+          if (myUseAllData) {
+            // Systematic "Use All Data" mode
+            // Create and shuffle data only at start of each epoch
+            if (myAllDataIndex === 0) {
+              myCurrentEpoch++;
+              myShuffledData = [];
+              
+              // Build flat array of all samples
+              for (let cls = 0; cls < 3; cls++) {
+                for (let i = 0; i < myTrainData[cls].length; i++) {
+                  myShuffledData.push({sample: myTrainData[cls][i], label: cls});
+                }
+              }
+              
+              // Shuffle once per epoch
+              for (let i = myShuffledData.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [myShuffledData[i], myShuffledData[j]] = [myShuffledData[j], myShuffledData[i]];
+              }
+              
+              myLog(`Starting Epoch ${myCurrentEpoch} (${myShuffledData.length} samples)`);
+            }
+            
+            // Get next batch from cached shuffled data
+            for (let i = 0; i < myBatchSize && myAllDataIndex < myShuffledData.length; i++) {
+              const item = myShuffledData[myAllDataIndex];
+              const augmented = (Math.random() > 0.5) ? myAugment(item.sample) : tf.clone(item.sample);
+              myBatch.push(augmented);
+              myLabels.push(item.label === 0 ? [1,0,0] : item.label === 1 ? [0,1,0] : [0,0,1]);
+              myAllDataIndex++;
+            }
+            
+            // Reset index when we've used all samples
+            if (myAllDataIndex >= myShuffledData.length) {
+              myAllDataIndex = 0;
+            }
+            
+          } else {
+            // Random sampling mode (original behavior)
+            for (let cls = 0; cls < 3; cls++) {
+              for (let i = 0; i < mySamplesPerClass; i++) {
+                const randomIdx = Math.floor(Math.random() * myTrainData[cls].length);
+                const sample = myTrainData[cls][randomIdx];
+                
+                const augmented = (Math.random() > 0.5) ? myAugment(sample) : tf.clone(sample);
+                myBatch.push(augmented);
+                myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
+              }
+            }
+          }
+          
+          const myBatchTensor = tf.concat(myBatch);
+          const myLabelsTensor = tf.tensor2d(myLabels);
+
+          let currentLoss = 0;
+          try {
+            const trainResult = await myModel.trainOnBatch(myBatchTensor, myLabelsTensor);
+            currentLoss = Array.isArray(trainResult) ? trainResult[0] : trainResult;
+            
+            if (isNaN(currentLoss) || !isFinite(currentLoss)) {
+              myLog("WARNING: Invalid loss detected, skipping batch");
+              currentLoss = 0;
+            }
+          } catch (error) {
+            myLog("ERROR during training: " + error.message);
+            currentLoss = 0;
+          }
+          
+          myBatchTensor.dispose();
+          myLabelsTensor.dispose();
+          myBatch.forEach(t => {
+            let isStoredSample = false;
+            for (let cls = 0; cls < 3; cls++) {
+              if (myTrainData[cls].includes(t)) {
+                isStoredSample = true;
+                break;
+              }
+            }
+            if (!isStoredSample) t.dispose();
+          });
+          
+          myEpochCount++;
+          if (currentLoss > 0) {
+            myLossSum += currentLoss;
+            myLossCount++;
+          }
+          
+          if (myEpochCount % 10 === 0) {
+            const avgLoss = myLossCount > 0 ? myLossSum / myLossCount : 0;
+            
+            if (avgLoss > 0 && isFinite(avgLoss)) {
+              myLossHistory.push(avgLoss);
+            }
+            
+            if (myLossHistory.length > 20) myLossHistory.shift();
+            
+            const recentAvgLoss = myLossHistory.length > 0 
+              ? myLossHistory.reduce((a,b) => a+b, 0) / myLossHistory.length 
+              : 0;
+            
+            document.getElementById('myEpochDisplay').innerText = myEpochCount;
+            document.getElementById('myLossDisplay').innerText = 
+              myLossHistory.length > 0 ? recentAvgLoss.toFixed(4) : '--';
+            
+            let status = '';
+            let statusColor = '';
+            let progressPercent = 0;
+            
+            if (myLossHistory.length === 0) {
+              status = 'Initializing...';
+              statusColor = '#9E9E9E';
+              progressPercent = 5;
+            } else if (recentAvgLoss > 1.0) {
+              status = 'Starting...';
+              statusColor = '#FF5722';
+              progressPercent = 10;
+            } else if (recentAvgLoss > 0.5) {
+              status = 'Training...';
+              statusColor = '#FF9800';
+              progressPercent = 30;
+            } else if (recentAvgLoss > 0.2) {
+              status = 'Improving...';
+              statusColor = '#FFC107';
+              progressPercent = 60;
+            } else if (recentAvgLoss > 0.1) {
+              status = 'Converging...';
+              statusColor = '#8BC34A';
+              progressPercent = 80;
+            } else {
+              status = 'Well Trained ✓';
+              statusColor = '#4CAF50';
+              progressPercent = 100;
+            }
+            
+            document.getElementById('myStatusDisplay').innerText = status;
+            document.getElementById('myStatusDisplay').style.color = statusColor;
+            document.getElementById('myProgressBar').style.width = progressPercent + '%';
+            
+            document.getElementById('myPauseBtn').disabled = false;
+            
+            myLossSum = 0;
+            myLossCount = 0;
+          }
+        } else if (reachedLimit) {
+          if (!myTrainingPaused) {
+            myPauseTraining();
+            if (myUseAllData) {
+              const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
+              myLog(`Training complete: Reached ${targetEpochs} epochs`);
+            } else {
+              myLog(`Training stopped: Reached ${maxBatches} batches`);
+            }
+          }
+          const totalSamples = counts[0] + counts[1] + counts[2];
+          const batchesPerEpoch = totalSamples > 0 ? Math.ceil(totalSamples / myBatchSize) : 1;
+          const finalEpochs = (myEpochCount / batchesPerEpoch).toFixed(1);
+          document.getElementById('myStatusDisplay').innerText = `Completed (${finalEpochs} epochs, ${myEpochCount} batches)`;
+          document.getElementById('myStatusDisplay').style.color = '#4CAF50';
+        } else {
+          if (myTrainingPaused) {
+            document.getElementById('myStatusDisplay').innerText = 'Paused';
+            document.getElementById('myStatusDisplay').style.color = '#FF9800';
+          } else {
+            // Show how many more samples needed for each class
+            const myNeeds = [
+              Math.max(0, minSamples - counts[0]),
+              Math.max(0, minSamples - counts[1]),
+              Math.max(0, minSamples - counts[2])
+            ];
+            document.getElementById('myStatusDisplay').innerText = `Waiting (need: ${myNeeds[0]}, ${myNeeds[1]}, ${myNeeds[2]} more)`;
+            document.getElementById('myStatusDisplay').style.color = '#9E9E9E';
+          }
+        }
+
+        // Only run analysis if not stopped
+        if (!myAnalysisStopped) {
+          document.getElementById('myStopAnalysisBtn').disabled = false;
+          
+          const myPred = myModel.predict(myInput);
+          const myProbs = await myPred.data();
+          const myID = (await myPred.argMax(1).data())[0];
+          
+          const conf0 = (myProbs[0] * 100).toFixed(1);
+          const conf1 = (myProbs[1] * 100).toFixed(1);
+          const conf2 = (myProbs[2] * 100).toFixed(1);
+          
+          const maxConf = Math.max(myProbs[0], myProbs[1], myProbs[2]) * 100;
+          const confColor = maxConf > 80 ? 'green' : maxConf > 50 ? 'orange' : 'red';
+          const uncertainWarning = maxConf < 50 ? '<br><span style="color:red;">⚠ Low Confidence - Need More Training?</span>' : '';
+          
+          document.getElementById('myOutputDisplay').innerHTML = 
+            `DETECTED: <b style="color:${confColor}">${document.getElementById('myLabel'+myID).value}</b><br>` +
+            `[${conf0}%, ${conf1}%, ${conf2}%]` +
+            uncertainWarning;
+          
+          myPred.dispose();
+        }
+        
+        myInput.dispose();
+      }, 150);
+    }
+
+    function myPauseTraining() {
+      myTrainingPaused = true;
+      document.getElementById('myPauseBtn').style.display = 'none';
+      document.getElementById('myResumeBtn').style.display = 'block';
+      myLog("Training Paused - Safe to export model");
+    }
+
+    function myResumeTraining() {
+      myTrainingPaused = false;
+      document.getElementById('myPauseBtn').style.display = 'block';
+      document.getElementById('myResumeBtn').style.display = 'none';
+      myLog("Training Resumed");
+    }
+
+    function toCString(str) {
+      str = str.substring(0, 20);
+      return str.replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"')
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r')
+                .replace(/\t/g, '\\t');
+    }
+
+    async function myExportHeader() {
+      if(!myModel) { myLog("Error: No Model to export"); return; }
+      const myIsInt8 = document.getElementById('myInt8Toggle').checked;
+      const myIsGrayscale = document.getElementById('myGrayscaleToggle').checked;
+      
+      // WARNING: Can only export grayscale if model was trained in grayscale mode
+      if (myIsGrayscale && !myIsGrayscaleMode) {
+        alert('⚠️ Warning: Model was trained in RGB mode.\n\nTo export grayscale, please:\n1. Check "Use Grayscale" BEFORE starting Camera & Brain\n2. Retrain the model\n3. Then export\n\nExporting RGB model instead...');
+        myLog("ERROR: Cannot convert RGB model to grayscale - exporting RGB");
+        document.getElementById('myGrayscaleToggle').checked = false;
+        return;
+      }
+      
+      myLog(`Exporting ${myIsInt8 ? "Int8" : "Float"} ${myIsGrayscale ? "Grayscale" : "RGB"} Header with Labels...`);
+      
+      const label0 = toCString(document.getElementById('myLabel0').value);
+      const label1 = toCString(document.getElementById('myLabel1').value);
+      const label2 = toCString(document.getElementById('myLabel2').value);
+      
+      let myText = `// Overflow-Protected 2-Layer CNN Model with Labels\n`;
+      myText += `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+      
+      myText += `// Class Labels\n`;
+      myText += `const char* myClassLabels[3] = {\n`;
+      myText += `  "${label0}",\n`;
+      myText += `  "${label1}",\n`;
+      myText += `  "${label2}"\n`;
+      myText += `};\n\n`;
+      
+      if (myIsInt8) { myText += `#define USE_INT8_MODE\n`; }
+      if (myIsGrayscale) { myText += `#define USE_GRAYSCALE_MODE\n`; }
+      myText += `\n`;
+      
+      const myNames = ["myConv1_w", "myConv1_b", "myConv2_w", "myConv2_b", "myOutput_w", "myOutput_b"];
+      let myNameIdx = 0;
+      
+      for (let myL of myModel.layers) {
+          if (myL.getWeights().length === 0) continue;
+          
+          for (let myW of myL.getWeights()) {
+              let myData = await myW.data();
+              let myDataArray = Array.from(myData);
+              
+              const maxAbsWeight = Math.max(...myDataArray.map(Math.abs));
+              if (maxAbsWeight > 10.0) {
+                myLog(`WARNING: Large weights detected (${maxAbsWeight.toFixed(2)}), clipping...`);
+                myDataArray = myDataArray.map(v => Math.max(-10.0, Math.min(10.0, v)));
+              }
+              
+              if (myIsInt8) {
+                  const myMax = Math.max(...myDataArray.map(Math.abs));
+                  const myScale = 127.0 / (myMax || 1);
+                  myText += `const float ${myNames[myNameIdx]}_scale = ${myScale.toFixed(6)}f;\n`;
+                  myText += `const int8_t ${myNames[myNameIdx]}[] = { `;
+                  myText += myDataArray.map(v => Math.round(v * myScale)).join(', ');
+              } else {
+                  myText += `const float ${myNames[myNameIdx]}[] = { `;
+                  myText += myDataArray.map(v => v.toFixed(6)).join(', ');
+              }
+              myText += ` };\n\n`;
+              myNameIdx++;
+          }
+      }
+      myText += `#endif`;
+      
+      const myLink = document.createElement('a');
+      myLink.href = URL.createObjectURL(new Blob([myText]));
+      myLink.download = document.getElementById('myExportName').value + ".h";
+      myLink.click();
+      myLog(`Export Successful with Labels: [${label0}, ${label1}, ${label2}]`);
+    }
+
+    function myCollect(myID) {
+      const myVideo = document.getElementById('myVideo1');
+      if (!myVideo.srcObject) {
+        myLog("ERROR: Camera not started!");
+        return;
+      }
+      
+      let myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]);
+      
+      // Convert to grayscale if in grayscale mode
+      if (myIsGrayscaleMode) {
+        const myOldFrame = myFrame;
+        myFrame = tf.tidy(() => {
+          const r = myOldFrame.slice([0, 0, 0], [64, 64, 1]);
+          const g = myOldFrame.slice([0, 0, 1], [64, 64, 1]);
+          const b = myOldFrame.slice([0, 0, 2], [64, 64, 1]);
+          return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+        });
+        myOldFrame.dispose();
+      }
+      
+      const myOldFrame2 = myFrame;
+      myFrame = myFrame.div(255.0).expandDims(0);
+      myOldFrame2.dispose();
+      
+      const frameData = myFrame.dataSync();
+      let hasNaN = false;
+      for (let i = 0; i < frameData.length; i++) {
+        if (isNaN(frameData[i]) || !isFinite(frameData[i])) {
+          hasNaN = true;
+          break;
+        }
+      }
+      
+      if (hasNaN) {
+        myLog("ERROR: Invalid camera frame detected, skipping");
+        myFrame.dispose();
+        return;
+      }
+      
+      if (myTrainData[myID].length < myMaxBuffer) {
+        myTrainData[myID].push(myFrame);
+      } else {
+        myTrainData[myID][0].dispose();
+        myTrainData[myID].shift();
+        myTrainData[myID].push(myFrame);
+      }
+      
+      document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
+      myLog(`Class ${myID} Captured (Total: ${myTrainData[myID].length})`);
+      myUpdateEpochHint();  // Update hint when data changes
+    }
+
+    function myLoadImages(myID) {
+      const myInput = document.createElement('input');
+      myInput.type = 'file';
+      myInput.multiple = true;
+      myInput.accept = 'image/*';
+      
+      myInput.onchange = async (e) => {
+        const files = Array.from(e.target.files);
+        myLog(`Loading ${files.length} images for Class ${myID}...`);
+        
+        let loaded = 0;
+        for (const file of files) {
+          try {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            
+            await new Promise((resolve, reject) => {
+              img.onload = () => {
+                try {
+                  let tensor = tf.browser.fromPixels(img).resizeBilinear([64,64]);
+                  
+                  // Convert to grayscale if in grayscale mode
+                  if (myIsGrayscaleMode) {
+                    const myOldTensor = tensor;
+                    tensor = tf.tidy(() => {
+                      const r = myOldTensor.slice([0, 0, 0], [64, 64, 1]);
+                      const g = myOldTensor.slice([0, 0, 1], [64, 64, 1]);
+                      const b = myOldTensor.slice([0, 0, 2], [64, 64, 1]);
+                      return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+                    });
+                    myOldTensor.dispose();
+                  }
+                  
+                  const myOldTensor2 = tensor;
+                  tensor = tensor.div(255.0).expandDims(0);
+                  myOldTensor2.dispose();
+                  
+                  // Validate tensor
+                  const data = tensor.dataSync();
+                  let isValid = true;
+                  for (let i = 0; i < data.length; i++) {
+                    if (isNaN(data[i]) || !isFinite(data[i])) {
+                      isValid = false;
+                      break;
+                    }
+                  }
+                  
+                  if (isValid) {
+                    if (myTrainData[myID].length < myMaxBuffer) {
+                      myTrainData[myID].push(tensor);
+                    } else {
+                      myTrainData[myID][0].dispose();
+                      myTrainData[myID].shift();
+                      myTrainData[myID].push(tensor);
+                    }
+                    loaded++;
+                  } else {
+                    tensor.dispose();
+                  }
+                  
+                  URL.revokeObjectURL(url);
+                  resolve();
+                } catch (err) {
+                  URL.revokeObjectURL(url);
+                  reject(err);
+                }
+              };
+              img.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error('Failed to load image'));
+              };
+              img.src = url;
+            });
+          } catch (err) {
+            console.error('Error loading image:', err);
+          }
+        }
+        
+        document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
+        myLog(`Class ${myID}: Loaded ${loaded}/${files.length} images (Total: ${myTrainData[myID].length})`);
+        myUpdateEpochHint();  // Update hint when data changes
+      };
+      
+      myInput.click();
+    }
+
+    function myClearImages(myID) {
+      if (myTrainData[myID].length === 0) {
+        myLog(`Class ${myID}: Already empty`);
+        return;
+      }
+      
+      const count = myTrainData[myID].length;
+      
+      // Dispose all tensors
+      myTrainData[myID].forEach(tensor => tensor.dispose());
+      myTrainData[myID] = [];
+      
+      document.getElementById('myCount' + myID).innerHTML = `0 samples`;
+      myLog(`Class ${myID}: Cleared ${count} samples`);
+      myUpdateEpochHint();  // Update hint when data changes
+    }
+
+    async function mySaveModel() { await myModel.save('downloads://my-tfjs-model'); myLog("TFJS Model Saved"); }
+    async function myLoadModel() {
+        const myU = document.createElement('input'); myU.type = 'file'; myU.multiple = true;
+        myU.onchange = async (e) => { 
+            myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); 
+            myLog("TFJS Model Loaded");
+        };
+        myU.click();
+    }
+  </script>
+</div>
+
+<div align="center">
+  <input id="myUpdateBtn" type="button" value="Update & Run Code" style="visibility:hidden; background-color: yellow; font-weight:bold; padding:12px; border-radius:8px; cursor:pointer;" onclick="myApplyAndRun()">
+</div>
+
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:95%; background:black; color:white; font-family:monospace; margin:15px; padding:10px; border-radius:10px;" onclick="myToggleEditor()">
+Click here to see/edit the Source Code...
+</textarea>
+
+<script>
+let myOnce = true;
+function myToggleEditor() {
+    if (myOnce) {
+       myTextGrow('myTextarea1', 'myCodeSpace');
+       document.getElementById('myUpdateBtn').style.visibility = 'visible';
+       myOnce = false;
+    }
+}
+function myApplyAndRun() {
+  let myLines = document.getElementById('myTextarea1').value.split('\n');
+  myLines.shift(); myLines.shift(); myLines.pop();   
+  document.getElementById('myCodeSpace').innerHTML = myLines.join('\n');
+  myLog("Code Updated & Restarting...");
+  myStartAll();
+}
+function myTextGrow(myT, myC) {
+   const myArea = document.getElementById(myT);
+   myArea.value = '\x3Cscript src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0">\x3C/script>\n\n' + document.getElementById(myC).innerHTML;
+   myArea.rows = 20;
+}
+(async function init() {
+  const myDevices = await navigator.mediaDevices.enumerateDevices();
+  const mySelect = document.getElementById('myCameraSelect');
+  myDevices.filter(d => d.kind === 'videoinput').forEach((d, i) => {
+    const myOpt = document.createElement('option');
+    myOpt.value = d.deviceId;
+    myOpt.text = d.label || `Camera ${i + 1}`;
+    mySelect.appendChild(myOpt);
+  });
+})();
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <br>  <br>
+  <h2>XIAO ML Kit Code below</h2>
+You will need to export the header file and enter it as myModel.h as an include file with the code below <br>
+
+<textarea rows=30 cols="200" nowrap>
+
+
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "myModel.h" 
+
+// --- 1. CONFIGURATION & BUFFERS ---
+#ifdef USE_GRAYSCALE_MODE
+  float myInputBuffer[64 * 64 * 1];  // Single channel
+#else
+  float myInputBuffer[64 * 64 * 3];  // RGB channels
+#endif
+
+float myConv1Output[62 * 62 * 4];
+float myPool1Output[31 * 31 * 4];
+float myConv2Output[29 * 29 * 8];
+
+// OVERFLOW PROTECTION: Clip helper function
+inline float clipValue(float val, float minVal = -100.0f, float maxVal = 100.0f) {
+    if (isnan(val) || isinf(val)) return 0.0f;
+    if (val < minVal) return minVal;
+    if (val > maxVal) return maxVal;
+    return val;
+}
+
+#ifdef USE_INT8_MODE
+  #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
+#else
+  #define GET_W(arr, idx, scale) (arr[idx])
+  float myConv1_w_scale=1, myConv1_b_scale=1;
+  float myConv2_w_scale=1, myConv2_b_scale=1;
+  float myOutput_w_scale=1, myOutput_b_scale=1;
+#endif
+
+// Camera Pins (XIAO ESP32S3 Sense)
+#define XCLK_GPIO_NUM 10
+#define SIOD_GPIO_NUM 40
+#define SIOC_GPIO_NUM 39
+#define Y9_GPIO_NUM   48
+#define Y8_GPIO_NUM   11
+#define Y7_GPIO_NUM   12
+#define Y6_GPIO_NUM   14
+#define Y5_GPIO_NUM   16
+#define Y4_GPIO_NUM   18
+#define Y3_GPIO_NUM   17
+#define Y2_GPIO_NUM   15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// --- 2. FIRST CONVOLUTION LAYER (3x3, 4 filters) ---
+void myConv1() {
+    for (int f = 0; f < 4; f++) {
+        int outBase = f * 3844;
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+                
+                #ifdef USE_GRAYSCALE_MODE
+                  // Grayscale: 1 channel, 9 weights per filter
+                  for (int ky = 0; ky < 3; ky++) {
+                      for (int kx = 0; kx < 3; kx++) {
+                          int pIdx = (y+ky)*64 + (x+kx);
+                          int wIdx = (f*9) + (ky*3) + kx;
+                          sum += myInputBuffer[pIdx] * GET_W(myConv1_w, wIdx, myConv1_w_scale);
+                      }
+                  }
+                #else
+                  // RGB: 3 channels, 27 weights per filter
+                  for (int ky = 0; ky < 3; ky++) {
+                      for (int kx = 0; kx < 3; kx++) {
+                          int pIdx = ((y+ky)*64 + (x+kx))*3;
+                          int wIdx = (f*27) + (ky*9) + (kx*3);
+                          sum += myInputBuffer[pIdx]   * GET_W(myConv1_w, wIdx,   myConv1_w_scale);
+                          sum += myInputBuffer[pIdx+1] * GET_W(myConv1_w, wIdx+1, myConv1_w_scale);
+                          sum += myInputBuffer[pIdx+2] * GET_W(myConv1_w, wIdx+2, myConv1_w_scale);
+                      }
+                  }
+                #endif
+                
+                sum += GET_W(myConv1_b, f, myConv1_b_scale);
+                sum = clipValue(sum, -100.0f, 100.0f);  // Increased from 50 to 100
+                myConv1Output[outBase + (y*62 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+// --- 3. MAX POOLING LAYER (2x2, stride 2) ---
+void myMaxPool1() {
+    for (int f = 0; f < 4; f++) {
+        int inBase = f * 3844;
+        int outBase = f * 961;
+        for (int y = 0; y < 31; y++) {
+            for (int x = 0; x < 31; x++) {
+                int inY = y * 2;
+                int inX = x * 2;
+                float maxVal = myConv1Output[inBase + (inY*62 + inX)];
+                maxVal = max(maxVal, myConv1Output[inBase + (inY*62 + inX+1)]);
+                maxVal = max(maxVal, myConv1Output[inBase + ((inY+1)*62 + inX)]);
+                maxVal = max(maxVal, myConv1Output[inBase + ((inY+1)*62 + inX+1)]);
+                myPool1Output[outBase + (y*31 + x)] = maxVal;
+            }
+        }
+    }
+}
+
+// --- 4. SECOND CONVOLUTION LAYER (3x3, 8 filters) --- FIXED!
+void myConv2() {
+    for (int f = 0; f < 8; f++) {
+        int outBase = f * 841;
+        for (int y = 0; y < 29; y++) {
+            for (int x = 0; x < 29; x++) {
+                float sum = 0;
+                for (int c = 0; c < 4; c++) {
+                    int inBase = c * 961;
+                    for (int ky = 0; ky < 3; ky++) {
+                        for (int kx = 0; kx < 3; kx++) {
+                            int pIdx = inBase + ((y+ky)*31 + (x+kx));
+                            // CRITICAL FIX: Was (f*108)+(c*27)+(ky*9)+(kx*3)
+                            // Correct: 8 filters, 4 channels, 3x3 kernel = 36 weights per filter
+                            int wIdx = (f*36) + (c*9) + (ky*3) + kx;
+                            sum += myPool1Output[pIdx] * GET_W(myConv2_w, wIdx, myConv2_w_scale);
+                        }
+                    }
+                }
+                sum += GET_W(myConv2_b, f, myConv2_b_scale);
+                sum = clipValue(sum, -100.0f, 100.0f);  // Increased from 50 to 100
+                myConv2Output[outBase + (y*29 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+// --- 5. THE WINNER LOGIC (Dense Layer with Overflow Protection) ---
+int myGetWinner() {
+    float myLogits[3] = {0, 0, 0};
+    int totalFeatures = 29 * 29 * 8;
+    
+    for (int i = 0; i < 3; i++) {
+        double sum = 0.0;
+        double compensation = 0.0;
+        
+        for (int j = 0; j < totalFeatures; j++) {
+            double term = (double)myConv2Output[j] *
+                          GET_W(myOutput_w, i*totalFeatures + j, myOutput_w_scale);
+            double y = term - compensation;
+            double t = sum + y;
+            compensation = (t - sum) - y;
+            sum = t;
+        }
+        
+        myLogits[i] = clipValue(
+            (float)sum + GET_W(myOutput_b, i, myOutput_b_scale),
+            -50.0f, 50.0f
+        );
+    }
+    
+    Serial.print("Logits: [");
+    Serial.print(myLogits[0], 2); Serial.print(", ");
+    Serial.print(myLogits[1], 2); Serial.print(", ");
+    Serial.print(myLogits[2], 2); Serial.print("] -> ");
+
+    float maxLogit = max(max(myLogits[0], myLogits[1]), myLogits[2]);
+    float expSum = exp(myLogits[0]-maxLogit) +
+                   exp(myLogits[1]-maxLogit) +
+                   exp(myLogits[2]-maxLogit);
+
+    Serial.print("Probs: [");
+    for (int i = 0; i < 3; i++) {
+        float p = exp(myLogits[i]-maxLogit) / expSum * 100.0f;
+        Serial.print(p, 0); Serial.print("%");
+        if (i < 2) Serial.print(", ");
+    }
+    Serial.print("] ");
+
+    int win = (myLogits[1] > myLogits[0]) ? 1 : 0;
+    if (myLogits[2] > myLogits[win]) win = 2;
+    return win;
+}
+
+// --- 6. IMAGE PROCESSING (QVGA 320x240 → 64x64) ---
+void myProcessCamera(camera_fb_t *fb) {
+    uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgb) return;
+
+    if (!fmt2rgb888(fb->buf, fb->len, fb->format, rgb)) {
+        free(rgb);
+        return;
+    }
+
+    float scaleY = (float)fb->height / 64.0f;
+    float scaleX = (float)fb->width  / 64.0f;
+
+    for (int y = 0; y < 64; y++) {
+        float srcY = (y + 0.5f) * scaleY - 0.5f;
+        int y0 = (int)srcY;
+        int y1 = min(y0 + 1, (int)fb->height - 1);
+        float dy = srcY - y0;
+
+        for (int x = 0; x < 64; x++) {
+            float srcX = (x + 0.5f) * scaleX - 0.5f;
+            int x0 = (int)srcX;
+            int x1 = min(x0 + 1, (int)fb->width - 1);
+            float dx = srcX - x0;
+
+            int idx00 = (y0 * fb->width + x0) * 3;
+            int idx01 = (y0 * fb->width + x1) * 3;
+            int idx10 = (y1 * fb->width + x0) * 3;
+            int idx11 = (y1 * fb->width + x1) * 3;
+
+            // Calculate interpolated R, G, B
+            float r = (1.0f - dy) * ((1.0f - dx) * rgb[idx00] + dx * rgb[idx01]) +
+                      dy * ((1.0f - dx) * rgb[idx10] + dx * rgb[idx11]);
+            float g = (1.0f - dy) * ((1.0f - dx) * rgb[idx00 + 1] + dx * rgb[idx01 + 1]) +
+                      dy * ((1.0f - dx) * rgb[idx10 + 1] + dx * rgb[idx11 + 1]);
+            float b = (1.0f - dy) * ((1.0f - dx) * rgb[idx00 + 2] + dx * rgb[idx01 + 2]) +
+                      dy * ((1.0f - dx) * rgb[idx10 + 2] + dx * rgb[idx11 + 2]);
+
+            #ifdef USE_GRAYSCALE_MODE
+              // Convert to Grayscale - MATCH WEB TRAINER EXACTLY
+              float gray = (r * 0.299f) + (g * 0.587f) + (b * 0.114f);
+              float norm = gray / 255.0f;
+              myInputBuffer[y * 64 + x] = norm;
+            #else
+              // Store RGB separately
+              int baseIdx = (y * 64 + x) * 3;
+              myInputBuffer[baseIdx]     = r / 255.0f;
+              myInputBuffer[baseIdx + 1] = g / 255.0f;
+              myInputBuffer[baseIdx + 2] = b / 255.0f;
+            #endif
+        }
+    }
+    free(rgb);
+}
+
+void setup() {
+    Serial.begin(115200);
+
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM; config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM; config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM; config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM; config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = -1;
+    config.pin_reset = -1;
+
+    config.xclk_freq_hz = 10000000;
+    config.frame_size = FRAMESIZE_QVGA;   
+    config.pixel_format = PIXFORMAT_JPEG;
+    config.grab_mode = CAMERA_GRAB_LATEST;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.fb_count = 1;
+    config.jpeg_quality = 12;
+
+    esp_camera_init(&config);
+
+    // Display mode info
+    Serial.print("System Online: CNN (");
+    #ifdef USE_GRAYSCALE_MODE
+      Serial.print("Grayscale");
+    #else
+      Serial.print("RGB");
+    #endif
+    Serial.print(" / ");
+    #ifdef USE_INT8_MODE
+      Serial.print("Int8");
+    #else
+      Serial.print("Float");
+    #endif
+    Serial.println(" mode)");
+    
+    Serial.println("Classes:");
+    Serial.print("[0] "); Serial.println(myClassLabels[0]);
+    Serial.print("[1] "); Serial.println(myClassLabels[1]);
+    Serial.print("[2] "); Serial.println(myClassLabels[2]);
+}
+
+void loop() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+
+    myProcessCamera(fb);
+    esp_camera_fb_return(fb);
+
+    // A0 DEBUG MODE - Press A0 button for detailed analysis
+    if (analogRead(A0) > 2000) {
+        Serial.println("\n========== DETAILED DEBUG ==========");
+        
+        // Print mode info
+        Serial.print("MODE: ");
+        #ifdef USE_GRAYSCALE_MODE
+          Serial.print("Grayscale");
+        #else
+          Serial.print("RGB");
+        #endif
+        Serial.print(" / ");
+        #ifdef USE_INT8_MODE
+          Serial.println("Int8");
+        #else
+          Serial.println("Float");
+        #endif
+        
+        // 1. INPUT BUFFER STATISTICS
+        float minVal = 1.0, maxVal = 0.0, avgVal = 0.0;
+        #ifdef USE_GRAYSCALE_MODE
+            int totalPixels = 64 * 64;
+        #else
+            int totalPixels = 64 * 64 * 3;
+        #endif
+        
+        for (int i = 0; i < totalPixels; i++) {
+            float val = myInputBuffer[i];
+            if (val < minVal) minVal = val;
+            if (val > maxVal) maxVal = val;
+            avgVal += val;
+        }
+        avgVal /= totalPixels;
+        
+        Serial.println("\n--- INPUT BUFFER ---");
+        Serial.print("Min: "); Serial.print(minVal, 4);
+        Serial.print(" | Max: "); Serial.print(maxVal, 4);
+        Serial.print(" | Avg: "); Serial.println(avgVal, 4);
+        
+        // 2. CONV1 OUTPUT STATISTICS
+        minVal = 1e6; maxVal = -1e6; avgVal = 0;
+        int zeroCount = 0;
+        int totalConv1 = 62 * 62 * 4;
+        for (int i = 0; i < totalConv1; i++) {
+            float val = myConv1Output[i];
+            if (val < minVal) minVal = val;
+            if (val > maxVal) maxVal = val;
+            avgVal += val;
+            if (val == 0.0f) zeroCount++;
+        }
+        avgVal /= totalConv1;
+        
+        Serial.println("\n--- CONV1 OUTPUT ---");
+        Serial.print("Min: "); Serial.print(minVal, 2);
+        Serial.print(" | Max: "); Serial.print(maxVal, 2);
+        Serial.print(" | Avg: "); Serial.print(avgVal, 2);
+        Serial.print(" | Zeros: "); Serial.print(zeroCount);
+        Serial.print("/"); Serial.print(totalConv1);
+        Serial.print(" ("); Serial.print((zeroCount * 100) / totalConv1);
+        Serial.println("%)");
+        
+        // 3. CONV2 OUTPUT STATISTICS
+        minVal = 1e6; maxVal = -1e6; avgVal = 0;
+        zeroCount = 0;
+        int totalConv2 = 29 * 29 * 8;
+        for (int i = 0; i < totalConv2; i++) {
+            float val = myConv2Output[i];
+            if (val < minVal) minVal = val;
+            if (val > maxVal) maxVal = val;
+            avgVal += val;
+            if (val == 0.0f) zeroCount++;
+        }
+        avgVal /= totalConv2;
+        
+        Serial.println("\n--- CONV2 OUTPUT ---");
+        Serial.print("Min: "); Serial.print(minVal, 2);
+        Serial.print(" | Max: "); Serial.print(maxVal, 2);
+        Serial.print(" | Avg: "); Serial.print(avgVal, 2);
+        Serial.print(" | Zeros: "); Serial.print(zeroCount);
+        Serial.print("/"); Serial.print(totalConv2);
+        Serial.print(" ("); Serial.print((zeroCount * 100) / totalConv2);
+        Serial.println("%)");
+        
+        // 4. WEIGHT SANITY CHECK
+        Serial.println("\n--- WEIGHT SAMPLES ---");
+        Serial.print("Conv1_w[0-9]: ");
+        for (int i = 0; i < 10; i++) {
+            Serial.print(GET_W(myConv1_w, i, myConv1_w_scale), 3);
+            Serial.print(" ");
+        }
+        Serial.println();
+        
+        Serial.print("Conv1_b[0-3]: ");
+        for (int i = 0; i < 4; i++) {
+            Serial.print(GET_W(myConv1_b, i, myConv1_b_scale), 3);
+            Serial.print(" ");
+        }
+        Serial.println();
+        
+        Serial.print("Conv2_w[0-9]: ");  // Added Conv2 weight check
+        for (int i = 0; i < 10; i++) {
+            Serial.print(GET_W(myConv2_w, i, myConv2_w_scale), 3);
+            Serial.print(" ");
+        }
+        Serial.println();
+        
+        Serial.print("Output_w[0-19]: ");
+        for (int i = 0; i < 20; i++) {
+            Serial.print(GET_W(myOutput_w, i, myOutput_w_scale), 4);
+            Serial.print(" ");
+        }
+        Serial.println();
+        
+        Serial.print("Output_b[0-2]: ");
+        for (int i = 0; i < 3; i++) {
+            Serial.print(GET_W(myOutput_b, i, myOutput_b_scale), 3);
+            Serial.print(" ");
+        }
+        Serial.println();
+        
+        // 5. ASCII PREVIEW OF INPUT (32x16)
+        Serial.println("\n--- INPUT PREVIEW (32x16 downsampled) ---");
+        for (int y = 0; y < 64; y += 4) {
+            for (int x = 0; x < 64; x += 2) {
+                #ifdef USE_GRAYSCALE_MODE
+                    float val = myInputBuffer[y * 64 + x];
+                #else
+                    int idx = (y * 64 + x) * 3;
+                    float val = (myInputBuffer[idx] + myInputBuffer[idx+1] + myInputBuffer[idx+2]) / 3.0f;
+                #endif
+                
+                if (val > 0.75) Serial.print("#");
+                else if (val > 0.5) Serial.print("+");
+                else if (val > 0.25) Serial.print(".");
+                else Serial.print(" ");
+            }
+            Serial.println();
+        }
+        
+        Serial.println("\n========== END DEBUG ==========\n");
+        delay(2000);
+    }
+
+    myConv1();
+    myMaxPool1();
+    myConv2();
+
+    int result = myGetWinner();
+    Serial.print("Class: ");
+    Serial.print(result);
+    Serial.print(" (");
+    Serial.print(myClassLabels[result]);
+    Serial.println(")");
+
+    delay(100);
+}
+  
+</textarea>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+<h2>By Jeremy Ellis, Use at your own Risk</h2>
+<a href="https://github.com/hpssjellis">github Profile hpssjellis</a><br>
+<a href="https://www.linkedin.com/in/jeremy-ellis-4237a9bb/">LinkedIn jeremy-ellis-4237a9bb</a> <br>
+<a href="https://opencollective.com/mlsysbook">Support the opencollective.com/mlsysbook</a> <br>
+
+
+  
+</body>
