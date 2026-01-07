@@ -11,9 +11,16 @@ This page supports the [mlsysbook.ai](https://mlsysbook.ai/)  and it's tinyTorch
 
 This page is trying to simplify for High School students and non-engineering undergrads TinyTorch without needing to do any Python installation<br>
 
-It does not reach the same extent of total understanding of the system, but is a half way point between just using machine learning and TinyTorch understanding. <br> 
+It does not reach the same extent of total understanding of the system, but is a half way point between just using machine learning and TinyTorch understanding. <br>
 
 
+<h1> Donate to the openCollective!</h1>
+[opencollective.com/mlsysbook](https://opencollective.com/mlsysbook) <br>
+
+<img width="489" height="477" alt="image" src="https://github.com/user-attachments/assets/a2e3dc57-f9cc-45ee-a998-91cf55509038" />
+
+
+<h3>ML  map</h3>
 
 
 <img width="1024"  alt="image" src="https://github.com/user-attachments/assets/2247019e-524d-4cc0-8087-b717466cebd3" />
