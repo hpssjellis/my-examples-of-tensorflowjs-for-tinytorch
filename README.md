@@ -91,7 +91,7 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 | [**torchjs23.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs23.html) | Brain Pruning | Deleting "lazy" neurons to speed up the network. | [**16.1** Pruning Ops](https://mlsysbook.ai/tinytorch/modules/16_compression_ABOUT.html) |
 | [**torchjs24.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs24.html) | Performance Lab | Benchmarking Latency and FPS in real-time. | [**19.1** Benchmarking](https://mlsysbook.ai/tinytorch/modules/19_benchmarking_ABOUT.html) |
 | [**torchjs25.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs25.html) | The Memory Guard | Debugging GPU leaks with `.dispose()` logic. | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
- [**torchjs60.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs60.html) | Finale JS to XIAOML Kit | Putting Vision all together for the XIAO ML Kit (esp32S3). (DRAFT) | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
+ [**torchjs61.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs61.html) | Finale JS to XIAOML Kit | Putting Vision all together for the XIAO ML Kit (esp32S3). (DRAFT) | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
 
 
 
