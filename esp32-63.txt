@@ -1,0 +1,250 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "myModel.h"
+
+// --- 1. CONFIGURATION & BUFFERS ---
+#ifdef USE_GRAYSCALE_MODE
+  float myInputBuffer[64 * 64 * 1];
+#else
+  float myInputBuffer[64 * 64 * 3];
+#endif
+
+float myConv1Output[62 * 62 * 4];
+float myPool1Output[31 * 31 * 4];
+float myConv2Output[29 * 29 * 8];
+
+// --- CLIP HELPER ---
+inline float clipValue(float val, float minVal = -100.0f, float maxVal = 100.0f) {
+    if (isnan(val) || isinf(val)) return 0.0f;
+    if (val < minVal) return minVal;
+    if (val > maxVal) return maxVal;
+    return val;
+}
+
+#ifdef USE_INT8_MODE
+  #define GET_W(arr, idx, scale) ((float)arr[idx] / scale)
+#else
+  #define GET_W(arr, idx, scale) (arr[idx])
+  float myConv1_w_scale=1, myConv1_b_scale=1;
+  float myConv2_w_scale=1, myConv2_b_scale=1;
+  float myOutput_w_scale=1, myOutput_b_scale=1;
+#endif
+
+// --- CAMERA PINS (XIAO ESP32S3 Sense) ---
+#define XCLK_GPIO_NUM 10
+#define SIOD_GPIO_NUM 40
+#define SIOC_GPIO_NUM 39
+#define Y9_GPIO_NUM   48
+#define Y8_GPIO_NUM   11
+#define Y7_GPIO_NUM   12
+#define Y6_GPIO_NUM   14
+#define Y5_GPIO_NUM   16
+#define Y4_GPIO_NUM   18
+#define Y3_GPIO_NUM   17
+#define Y2_GPIO_NUM   15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM  47
+#define PCLK_GPIO_NUM  13
+
+// --- 2. CONV1 ---
+void myConv1() {
+    for (int f = 0; f < 4; f++) {
+        int outBase = f * 3844;
+        for (int y = 0; y < 62; y++) {
+            for (int x = 0; x < 62; x++) {
+                float sum = 0;
+
+#ifdef USE_GRAYSCALE_MODE
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pIdx = (y+ky)*64 + (x+kx);
+                        int wIdx = (f*9) + (ky*3) + kx;
+                        sum += myInputBuffer[pIdx] *
+                               GET_W(myConv1_w, wIdx, myConv1_w_scale);
+                    }
+                }
+#else
+                for (int ky = 0; ky < 3; ky++) {
+                    for (int kx = 0; kx < 3; kx++) {
+                        int pIdx = ((y+ky)*64 + (x+kx))*3;
+                        int wIdx = (f*27) + (ky*9) + (kx*3);
+                        sum += myInputBuffer[pIdx]   * GET_W(myConv1_w, wIdx,   myConv1_w_scale);
+                        sum += myInputBuffer[pIdx+1] * GET_W(myConv1_w, wIdx+1, myConv1_w_scale);
+                        sum += myInputBuffer[pIdx+2] * GET_W(myConv1_w, wIdx+2, myConv1_w_scale);
+                    }
+                }
+#endif
+
+                sum += GET_W(myConv1_b, f, myConv1_b_scale);
+                sum = clipValue(sum);
+                myConv1Output[outBase + (y*62 + x)] = (sum > 0) ? sum : 0;
+            }
+        }
+    }
+}
+
+// --- 3. MAXPOOL ---
+void myMaxPool1() {
+    for (int f = 0; f < 4; f++) {
+        int inBase = f * 3844;
+        int outBase = f * 961;
+        for (int y = 0; y < 31; y++) {
+            for (int x = 0; x < 31; x++) {
+                int iy = y*2, ix = x*2;
+                float m = myConv1Output[inBase + (iy*62 + ix)];
+                m = max(m, myConv1Output[inBase + (iy*62 + ix+1)]);
+                m = max(m, myConv1Output[inBase + ((iy+1)*62 + ix)]);
+                m = max(m, myConv1Output[inBase + ((iy+1)*62 + ix+1)]);
+                myPool1Output[outBase + (y*31 + x)] = m;
+            }
+        }
+    }
+}
+
+// --- 4. CONV2 ---
+void myConv2() {
+    for (int f = 0; f < 8; f++) {
+        int outBase = f * 841;
+        for (int y = 0; y < 29; y++) {
+            for (int x = 0; x < 29; x++) {
+                float sum = 0;
+                for (int c = 0; c < 4; c++) {
+                    int inBase = c * 961;
+                    for (int ky = 0; ky < 3; ky++) {
+                        for (int kx = 0; kx < 3; kx++) {
+                            int pIdx = inBase + ((y+ky)*31 + (x+kx));
+                            int wIdx = (f*36) + (c*9) + (ky*3) + kx;
+                            sum += myPool1Output[pIdx] *
+                                   GET_W(myConv2_w, wIdx, myConv2_w_scale);
+                        }
+                    }
+                }
+
+              sum += GET_W(myConv2_b, f, myConv2_b_scale);
+              sum = clipValue(sum);
+
+               /// normal ReLU
+              //  myConv2Output[outBase + (y*29 + x)] = (sum > 0) ? sum : 0;
+
+              // LeakyReLU activation (THIS is where myAct lives)
+              float myAct = (sum > 0) ? sum : (0.1f * sum);
+              myConv2Output[outBase + (y*29 + x)] = myAct;
+
+            }
+        }
+    }
+}
+
+// --- 5. DENSE + DEBUG (STEP 4) ---
+int myGetWinner() {
+    float myLogits[3] = {0,0,0};
+    int totalFeatures = 29*29*8;
+
+    for (int i = 0; i < 3; i++) {
+        double sum = 0, c = 0;
+
+        for (int j = 0; j < totalFeatures; j++) {
+
+            // ===== STEP 4 DEBUG =====
+            if (i == 0 && j < 10) {
+                Serial.print("Conv2[");
+                Serial.print(j);
+                Serial.print("]=");
+                Serial.println(myConv2Output[j], 6);
+            }
+            // ========================
+
+            double term = (double)myConv2Output[j] *
+                          GET_W(myOutput_w, i*totalFeatures + j, myOutput_w_scale);
+            double y = term - c;
+            double t = sum + y;
+            c = (t - sum) - y;
+            sum = t;
+        }
+        myLogits[i] = clipValue(sum + GET_W(myOutput_b, i, myOutput_b_scale), -50, 50);
+    }
+
+    int win = (myLogits[1] > myLogits[0]) ? 1 : 0;
+    if (myLogits[2] > myLogits[win]) win = 2;
+    return win;
+}
+
+// --- 6. CAMERA PROCESSING (STEP 3) ---
+void myProcessCamera(camera_fb_t *fb) {
+    uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (!rgb) return;
+
+    if (!fmt2rgb888(fb->buf, fb->len, fb->format, rgb)) {
+        free(rgb); return;
+    }
+
+    float sx = (float)fb->width / 64.0f;
+    float sy = (float)fb->height / 64.0f;
+
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            int px = (int)(x * sx);
+            int py = (int)(y * sy);
+            int idx = (py * fb->width + px) * 3;
+
+            float r = rgb[idx];
+            float g = rgb[idx+1];
+            float b = rgb[idx+2];
+
+#ifdef USE_GRAYSCALE_MODE
+            float gray = (r*0.299f) + (g*0.587f) + (b*0.114f);
+            float norm = (gray - 127.5f) / 127.5f;   // STEP 3
+            myInputBuffer[y*64 + x] = norm;
+#else
+            int o = (y*64 + x)*3;
+            myInputBuffer[o]   = r / 255.0f;
+            myInputBuffer[o+1] = g / 255.0f;
+            myInputBuffer[o+2] = b / 255.0f;
+#endif
+        }
+    }
+    free(rgb);
+}
+
+void setup() {
+    Serial.begin(115200);
+    camera_config_t c;
+    c.ledc_channel = LEDC_CHANNEL_0;
+    c.ledc_timer = LEDC_TIMER_0;
+    c.pin_d0 = Y2_GPIO_NUM; c.pin_d1 = Y3_GPIO_NUM;
+    c.pin_d2 = Y4_GPIO_NUM; c.pin_d3 = Y5_GPIO_NUM;
+    c.pin_d4 = Y6_GPIO_NUM; c.pin_d5 = Y7_GPIO_NUM;
+    c.pin_d6 = Y8_GPIO_NUM; c.pin_d7 = Y9_GPIO_NUM;
+    c.pin_xclk = XCLK_GPIO_NUM;
+    c.pin_pclk = PCLK_GPIO_NUM;
+    c.pin_vsync = VSYNC_GPIO_NUM;
+    c.pin_href = HREF_GPIO_NUM;
+    c.pin_sscb_sda = SIOD_GPIO_NUM;
+    c.pin_sscb_scl = SIOC_GPIO_NUM;
+    c.pin_pwdn = -1;
+    c.pin_reset = -1;
+    c.xclk_freq_hz = 10000000;
+    c.frame_size = FRAMESIZE_QVGA;
+    c.pixel_format = PIXFORMAT_JPEG;
+    c.fb_location = CAMERA_FB_IN_PSRAM;
+    c.fb_count = 1;
+    c.jpeg_quality = 12;
+    esp_camera_init(&c);
+}
+
+void loop() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+    myProcessCamera(fb);
+    esp_camera_fb_return(fb);
+
+    myConv1();
+    myMaxPool1();
+    myConv2();
+
+    int r = myGetWinner();
+    Serial.print("Class: ");
+    Serial.println(r);
+
+    delay(3);
+}
