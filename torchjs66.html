@@ -289,7 +289,7 @@
         myModel = tf.sequential();
         myModel.add(tf.layers.conv2d({inputShape:[64,64,inputChannels], kernelSize:3, filters:4, activation:'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), biasInitializer: 'zeros'}));
         myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
-        myModel.add(tf.layers.conv2d({kernelSize:3, filters:12, activation:'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), biasInitializer: 'zeros'}));
+        myModel.add(tf.layers.conv2d({kernelSize:3, filters:8, activation:'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), biasInitializer: 'zeros'}));
         myModel.add(tf.layers.flatten());
         myModel.add(tf.layers.dropout({rate: 0.3}));
         myModel.add(tf.layers.dense({units:3, activation:'softmax', kernelInitializer: 'heNormal', biasInitializer: 'zeros'}));
@@ -704,6 +704,7 @@ function myTextGrow(myT, myC) {
 
 
 
+
   
 
 
@@ -839,7 +840,10 @@ void myConv2() {
                 }
                 sum += GET_W(myConv2_b, f, myConv2_b_scale);
                 sum = clipValue(sum, -100.0f, 100.0f);
-                myConv2Output[outBase + (y*29 + x)] = (sum > 0) ? sum : 0;
+                // Changed from ReLU to LeakyReLU to prevent dying neurons
+                // Debug showed 84% zeros in CONV2 for grayscale models
+                // LeakyReLU allows small negative values: f(x) = x if x>0, else 0.1*x
+                myConv2Output[outBase + (y*29 + x)] = (sum > 0) ? sum : (0.1f * sum);
             }
         }
     }
