@@ -151,7 +151,7 @@
     var myGrayscaleRenderTimer = null;
     var myAllDataIndex = 0;
     var myCurrentEpoch = 0;
-    var myShuffledData = [];  // Cache shuffled data
+    var myShuffledData = [];
 
     function myLog(myMsg) {
         const myDiv = document.getElementById('myDivHistory');
@@ -173,7 +173,6 @@
 
     function myUpdateEpochHint() {
       if (!document.getElementById('myUseAllData').checked) return;
-      
       const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
       const totalSamples = counts[0] + counts[1] + counts[2];
       const batchSizeInput = document.getElementById('myBatchSize');
@@ -182,12 +181,10 @@
       const targetEpochsInput = document.getElementById('myTargetEpochs');
       const targetEpochs = targetEpochsInput ? (parseFloat(targetEpochsInput.value) || 10) : 10;
       const totalBatches = Math.ceil(targetEpochs * batchesPerEpoch);
-      
       const hintElement = document.getElementById('myEpochHint');
       if (hintElement) {
         if (totalSamples > 0) {
-          hintElement.innerText = 
-            `(≈ ${batchesPerEpoch} batches/epoch = ${totalBatches} total batches)`;
+          hintElement.innerText = `(≈ ${batchesPerEpoch} batches/epoch = ${totalBatches} total batches)`;
         } else {
           hintElement.innerText = '(Waiting for training data...)';
         }
@@ -197,18 +194,15 @@
     function myAugment(tensor) {
       return tf.tidy(() => {
         let augmented = tensor;
-        
         if (Math.random() > 0.5) {
           const brightness = (Math.random() - 0.5) * 0.2;
           augmented = augmented.add(brightness).clipByValue(0, 1);
         }
-        
         if (Math.random() > 0.5) {
           const contrast = 0.8 + Math.random() * 0.4;
           const mean = augmented.mean();
           augmented = augmented.sub(mean).mul(contrast).add(mean).clipByValue(0, 1);
         }
-        
         return augmented;
       });
     }
@@ -242,30 +236,22 @@
       const myVideo = document.getElementById('myVideo1');
       const myCanvas = document.getElementById('myCanvas1');
       const myCtx = myCanvas.getContext('2d');
-      
       if (!myVideo.srcObject) {
         const myDeviceId = document.getElementById('myCameraSelect').value;
         myVideo.srcObject = await navigator.mediaDevices.getUserMedia({video: { width: 240, height: 240, deviceId: myDeviceId ? { exact: myDeviceId } : undefined }});
         myLog("Camera Started");
-        
-        // Setup grayscale video preview if needed
         myIsGrayscaleMode = document.getElementById('myGrayscaleToggle').checked;
         if (myIsGrayscaleMode) {
           myVideo.style.display = 'none';
           myCanvas.style.display = 'block';
-          
-          // Render grayscale video preview
           if (myGrayscaleRenderTimer) clearInterval(myGrayscaleRenderTimer);
           myGrayscaleRenderTimer = setInterval(() => {
             myCtx.drawImage(myVideo, 0, 0, 240, 240);
             const myImageData = myCtx.getImageData(0, 0, 240, 240);
             const myData = myImageData.data;
-            
             for (let i = 0; i < myData.length; i += 4) {
               const myGray = myData[i] * 0.299 + myData[i+1] * 0.587 + myData[i+2] * 0.114;
-              myData[i] = myGray;
-              myData[i+1] = myGray;
-              myData[i+2] = myGray;
+              myData[i] = myGray; myData[i+1] = myGray; myData[i+2] = myGray;
             }
             myCtx.putImageData(myImageData, 0, 0);
           }, 33);
@@ -274,51 +260,22 @@
           myCanvas.style.display = 'none';
         }
       }
-      
       if (!myModel) {
         const inputChannels = myIsGrayscaleMode ? 1 : 3;
         const myCurrentLearningRate = parseFloat(document.getElementById('myLearningRate').value) || 0.001;
-        
         myModel = tf.sequential();
-        myModel.add(tf.layers.conv2d({
-          inputShape:[64,64,inputChannels], 
-          kernelSize:3, 
-          filters:4, 
-          activation:'relu',
-          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}),  // Much weaker!
-          biasInitializer: 'zeros'
-        }));
+        myModel.add(tf.layers.conv2d({inputShape:[64,64,inputChannels], kernelSize:3, filters:4, activation:'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), biasInitializer: 'zeros'}));
         myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
-        myModel.add(tf.layers.conv2d({
-          kernelSize:3, 
-          filters:8, 
-          activation:'relu',
-          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}),  // Much weaker!
-          biasInitializer: 'zeros'
-        }));
+        myModel.add(tf.layers.conv2d({kernelSize:3, filters:8, activation:'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), biasInitializer: 'zeros'}));
         myModel.add(tf.layers.flatten());
         myModel.add(tf.layers.dropout({rate: 0.3}));
-        myModel.add(tf.layers.dense({
-          units:3, 
-          activation:'softmax',
-          // NO regularization on output layer for small datasets!
-          kernelInitializer: 'heNormal',
-          biasInitializer: 'zeros'
-        }));
-        
-        myModel.compile({
-          optimizer: tf.train.adam(myCurrentLearningRate), 
-          loss:'categoricalCrossentropy',
-          metrics: ['accuracy']
-        });
+        myModel.add(tf.layers.dense({units:3, activation:'softmax', kernelInitializer: 'heNormal', biasInitializer: 'zeros'}));
+        myModel.compile({optimizer: tf.train.adam(myCurrentLearningRate), loss:'categoricalCrossentropy', metrics: ['accuracy']});
         myLog(`Brain Initialized (${myIsGrayscaleMode ? 'Grayscale' : 'RGB'} 2-Layer CNN, LR: ${myCurrentLearningRate})`);
       }
-
       if (myTimer) clearInterval(myTimer);
       myTimer = setInterval(async () => {
         let myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]);
-        
-        // Convert to grayscale if in grayscale mode
         if (myIsGrayscaleMode) {
           const myOldInput = myInput;
           myInput = tf.tidy(() => {
@@ -329,20 +286,19 @@
           });
           myOldInput.dispose();
         }
-        
         const myOldInput2 = myInput;
         myInput = myInput.div(255.0).expandDims(0);
         myOldInput2.dispose();
-        
         const minSamples = parseInt(document.getElementById('myMinSamples').value) || 10;
         const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
         const minCount = Math.min(...counts);
         const maxCount = Math.max(...counts);
-        
-        // Calculate max batches based on mode
+        let myBatchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
+        if (myBatchSize < 3) myBatchSize = 3;
+        if (myBatchSize % 3 !== 0) myBatchSize = Math.ceil(myBatchSize / 3) * 3;
+        const mySamplesPerClass = myBatchSize / 3;
         const myUseAllData = document.getElementById('myUseAllData').checked;
         let maxBatches = 0;
-        
         if (myUseAllData) {
           const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
           const totalSamples = counts[0] + counts[1] + counts[2];
@@ -351,49 +307,28 @@
         } else {
           maxBatches = parseInt(document.getElementById('myMaxBatches').value) || 0;
         }
-        
         const reachedLimit = maxBatches > 0 && myEpochCount >= maxBatches;
-        
-        // Get batch size and calculate samples per class
-        let myBatchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
-        if (myBatchSize < 3) myBatchSize = 3;
-        if (myBatchSize % 3 !== 0) myBatchSize = Math.ceil(myBatchSize / 3) * 3;
-        const mySamplesPerClass = myBatchSize / 3;
-        
         if (minCount >= minSamples && !myTrainingPaused && !reachedLimit) {
           if (maxCount > minCount * 2) {
             if (Math.random() < 0.01) {
               myLog(`WARNING: Imbalanced data [${counts[0]}, ${counts[1]}, ${counts[2]}]`);
             }
           }
-          
-          let myBatch = [];
-          let myLabels = [];
-          
+          let myBatch = []; let myLabels = [];
           if (myUseAllData) {
-            // Systematic "Use All Data" mode
-            // Create and shuffle data only at start of each epoch
             if (myAllDataIndex === 0) {
-              myCurrentEpoch++;
-              myShuffledData = [];
-              
-              // Build flat array of all samples
+              myCurrentEpoch++; myShuffledData = [];
               for (let cls = 0; cls < 3; cls++) {
                 for (let i = 0; i < myTrainData[cls].length; i++) {
                   myShuffledData.push({sample: myTrainData[cls][i], label: cls});
                 }
               }
-              
-              // Shuffle once per epoch
               for (let i = myShuffledData.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [myShuffledData[i], myShuffledData[j]] = [myShuffledData[j], myShuffledData[i]];
               }
-              
               myLog(`Starting Epoch ${myCurrentEpoch} (${myShuffledData.length} samples)`);
             }
-            
-            // Get next batch from cached shuffled data
             for (let i = 0; i < myBatchSize && myAllDataIndex < myShuffledData.length; i++) {
               const item = myShuffledData[myAllDataIndex];
               const augmented = (Math.random() > 0.5) ? myAugment(item.sample) : tf.clone(item.sample);
@@ -401,34 +336,24 @@
               myLabels.push(item.label === 0 ? [1,0,0] : item.label === 1 ? [0,1,0] : [0,0,1]);
               myAllDataIndex++;
             }
-            
-            // Reset index when we've used all samples
-            if (myAllDataIndex >= myShuffledData.length) {
-              myAllDataIndex = 0;
-            }
-            
+            if (myAllDataIndex >= myShuffledData.length) { myAllDataIndex = 0; }
           } else {
-            // Random sampling mode (original behavior)
             for (let cls = 0; cls < 3; cls++) {
               for (let i = 0; i < mySamplesPerClass; i++) {
                 const randomIdx = Math.floor(Math.random() * myTrainData[cls].length);
                 const sample = myTrainData[cls][randomIdx];
-                
                 const augmented = (Math.random() > 0.5) ? myAugment(sample) : tf.clone(sample);
                 myBatch.push(augmented);
                 myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
               }
             }
           }
-          
           const myBatchTensor = tf.concat(myBatch);
           const myLabelsTensor = tf.tensor2d(myLabels);
-
           let currentLoss = 0;
           try {
             const trainResult = await myModel.trainOnBatch(myBatchTensor, myLabelsTensor);
             currentLoss = Array.isArray(trainResult) ? trainResult[0] : trainResult;
-            
             if (isNaN(currentLoss) || !isFinite(currentLoss)) {
               myLog("WARNING: Invalid loss detected, skipping batch");
               currentLoss = 0;
@@ -437,81 +362,35 @@
             myLog("ERROR during training: " + error.message);
             currentLoss = 0;
           }
-          
-          myBatchTensor.dispose();
-          myLabelsTensor.dispose();
+          myBatchTensor.dispose(); myLabelsTensor.dispose();
           myBatch.forEach(t => {
             let isStoredSample = false;
             for (let cls = 0; cls < 3; cls++) {
-              if (myTrainData[cls].includes(t)) {
-                isStoredSample = true;
-                break;
-              }
+              if (myTrainData[cls].includes(t)) { isStoredSample = true; break; }
             }
             if (!isStoredSample) t.dispose();
           });
-          
           myEpochCount++;
-          if (currentLoss > 0) {
-            myLossSum += currentLoss;
-            myLossCount++;
-          }
-          
+          if (currentLoss > 0) { myLossSum += currentLoss; myLossCount++; }
           if (myEpochCount % 10 === 0) {
             const avgLoss = myLossCount > 0 ? myLossSum / myLossCount : 0;
-            
-            if (avgLoss > 0 && isFinite(avgLoss)) {
-              myLossHistory.push(avgLoss);
-            }
-            
+            if (avgLoss > 0 && isFinite(avgLoss)) { myLossHistory.push(avgLoss); }
             if (myLossHistory.length > 20) myLossHistory.shift();
-            
-            const recentAvgLoss = myLossHistory.length > 0 
-              ? myLossHistory.reduce((a,b) => a+b, 0) / myLossHistory.length 
-              : 0;
-            
+            const recentAvgLoss = myLossHistory.length > 0 ? myLossHistory.reduce((a,b) => a+b, 0) / myLossHistory.length : 0;
             document.getElementById('myEpochDisplay').innerText = myEpochCount;
-            document.getElementById('myLossDisplay').innerText = 
-              myLossHistory.length > 0 ? recentAvgLoss.toFixed(4) : '--';
-            
-            let status = '';
-            let statusColor = '';
-            let progressPercent = 0;
-            
-            if (myLossHistory.length === 0) {
-              status = 'Initializing...';
-              statusColor = '#9E9E9E';
-              progressPercent = 5;
-            } else if (recentAvgLoss > 1.0) {
-              status = 'Starting...';
-              statusColor = '#FF5722';
-              progressPercent = 10;
-            } else if (recentAvgLoss > 0.5) {
-              status = 'Training...';
-              statusColor = '#FF9800';
-              progressPercent = 30;
-            } else if (recentAvgLoss > 0.2) {
-              status = 'Improving...';
-              statusColor = '#FFC107';
-              progressPercent = 60;
-            } else if (recentAvgLoss > 0.1) {
-              status = 'Converging...';
-              statusColor = '#8BC34A';
-              progressPercent = 80;
-            } else {
-              status = 'Well Trained ✓';
-              statusColor = '#4CAF50';
-              progressPercent = 100;
-            }
-            
+            document.getElementById('myLossDisplay').innerText = myLossHistory.length > 0 ? recentAvgLoss.toFixed(4) : '--';
+            let status = ''; let statusColor = ''; let progressPercent = 0;
+            if (myLossHistory.length === 0) { status = 'Initializing...'; statusColor = '#9E9E9E'; progressPercent = 5; }
+            else if (recentAvgLoss > 1.0) { status = 'Starting...'; statusColor = '#FF5722'; progressPercent = 10; }
+            else if (recentAvgLoss > 0.5) { status = 'Training...'; statusColor = '#FF9800'; progressPercent = 30; }
+            else if (recentAvgLoss > 0.2) { status = 'Improving...'; statusColor = '#FFC107'; progressPercent = 60; }
+            else if (recentAvgLoss > 0.1) { status = 'Converging...'; statusColor = '#8BC34A'; progressPercent = 80; }
+            else { status = 'Well Trained ✓'; statusColor = '#4CAF50'; progressPercent = 100; }
             document.getElementById('myStatusDisplay').innerText = status;
             document.getElementById('myStatusDisplay').style.color = statusColor;
             document.getElementById('myProgressBar').style.width = progressPercent + '%';
-            
             document.getElementById('myPauseBtn').disabled = false;
-            
-            myLossSum = 0;
-            myLossCount = 0;
+            myLossSum = 0; myLossCount = 0;
           }
         } else if (reachedLimit) {
           if (!myTrainingPaused) {
@@ -533,41 +412,25 @@
             document.getElementById('myStatusDisplay').innerText = 'Paused';
             document.getElementById('myStatusDisplay').style.color = '#FF9800';
           } else {
-            // Show how many more samples needed for each class
-            const myNeeds = [
-              Math.max(0, minSamples - counts[0]),
-              Math.max(0, minSamples - counts[1]),
-              Math.max(0, minSamples - counts[2])
-            ];
+            const myNeeds = [Math.max(0, minSamples - counts[0]), Math.max(0, minSamples - counts[1]), Math.max(0, minSamples - counts[2])];
             document.getElementById('myStatusDisplay').innerText = `Waiting (need: ${myNeeds[0]}, ${myNeeds[1]}, ${myNeeds[2]} more)`;
             document.getElementById('myStatusDisplay').style.color = '#9E9E9E';
           }
         }
-
-        // Only run analysis if not stopped
         if (!myAnalysisStopped) {
           document.getElementById('myStopAnalysisBtn').disabled = false;
-          
           const myPred = myModel.predict(myInput);
           const myProbs = await myPred.data();
           const myID = (await myPred.argMax(1).data())[0];
-          
           const conf0 = (myProbs[0] * 100).toFixed(1);
           const conf1 = (myProbs[1] * 100).toFixed(1);
           const conf2 = (myProbs[2] * 100).toFixed(1);
-          
           const maxConf = Math.max(myProbs[0], myProbs[1], myProbs[2]) * 100;
           const confColor = maxConf > 80 ? 'green' : maxConf > 50 ? 'orange' : 'red';
           const uncertainWarning = maxConf < 50 ? '<br><span style="color:red;">⚠ Low Confidence - Need More Training?</span>' : '';
-          
-          document.getElementById('myOutputDisplay').innerHTML = 
-            `DETECTED: <b style="color:${confColor}">${document.getElementById('myLabel'+myID).value}</b><br>` +
-            `[${conf0}%, ${conf1}%, ${conf2}%]` +
-            uncertainWarning;
-          
+          document.getElementById('myOutputDisplay').innerHTML = `DETECTED: <b style="color:${confColor}">${document.getElementById('myLabel'+myID).value}</b><br>[${conf0}%, ${conf1}%, ${conf2}%]` + uncertainWarning;
           myPred.dispose();
         }
-        
         myInput.dispose();
       }, 150);
     }
@@ -588,62 +451,40 @@
 
     function toCString(str) {
       str = str.substring(0, 20);
-      return str.replace(/\\/g, '\\\\')
-                .replace(/"/g, '\\"')
-                .replace(/\n/g, '\\n')
-                .replace(/\r/g, '\\r')
-                .replace(/\t/g, '\\t');
+      return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
     }
 
     async function myExportHeader() {
       if(!myModel) { myLog("Error: No Model to export"); return; }
       const myIsInt8 = document.getElementById('myInt8Toggle').checked;
       const myIsGrayscale = document.getElementById('myGrayscaleToggle').checked;
-      
-      // WARNING: Can only export grayscale if model was trained in grayscale mode
       if (myIsGrayscale && !myIsGrayscaleMode) {
         alert('⚠️ Warning: Model was trained in RGB mode.\n\nTo export grayscale, please:\n1. Check "Use Grayscale" BEFORE starting Camera & Brain\n2. Retrain the model\n3. Then export\n\nExporting RGB model instead...');
         myLog("ERROR: Cannot convert RGB model to grayscale - exporting RGB");
         document.getElementById('myGrayscaleToggle').checked = false;
         return;
       }
-      
       myLog(`Exporting ${myIsInt8 ? "Int8" : "Float"} ${myIsGrayscale ? "Grayscale" : "RGB"} Header with Labels...`);
-      
       const label0 = toCString(document.getElementById('myLabel0').value);
       const label1 = toCString(document.getElementById('myLabel1').value);
       const label2 = toCString(document.getElementById('myLabel2').value);
-      
-      let myText = `// Overflow-Protected 2-Layer CNN Model with Labels\n`;
-      myText += `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
-      
-      myText += `// Class Labels\n`;
-      myText += `const char* myClassLabels[3] = {\n`;
-      myText += `  "${label0}",\n`;
-      myText += `  "${label1}",\n`;
-      myText += `  "${label2}"\n`;
-      myText += `};\n\n`;
-      
+      let myText = `// Overflow-Protected 2-Layer CNN Model with Labels\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+      myText += `// Class Labels\nconst char* myClassLabels[3] = {\n  "${label0}",\n  "${label1}",\n  "${label2}"\n};\n\n`;
       if (myIsInt8) { myText += `#define USE_INT8_MODE\n`; }
       if (myIsGrayscale) { myText += `#define USE_GRAYSCALE_MODE\n`; }
       myText += `\n`;
-      
       const myNames = ["myConv1_w", "myConv1_b", "myConv2_w", "myConv2_b", "myOutput_w", "myOutput_b"];
       let myNameIdx = 0;
-      
       for (let myL of myModel.layers) {
           if (myL.getWeights().length === 0) continue;
-          
           for (let myW of myL.getWeights()) {
               let myData = await myW.data();
               let myDataArray = Array.from(myData);
-              
               const maxAbsWeight = Math.max(...myDataArray.map(Math.abs));
               if (maxAbsWeight > 10.0) {
                 myLog(`WARNING: Large weights detected (${maxAbsWeight.toFixed(2)}), clipping...`);
                 myDataArray = myDataArray.map(v => Math.max(-10.0, Math.min(10.0, v)));
               }
-              
               if (myIsInt8) {
                   const myMax = Math.max(...myDataArray.map(Math.abs));
                   const myScale = 127.0 / (myMax || 1);
@@ -659,7 +500,6 @@
           }
       }
       myText += `#endif`;
-      
       const myLink = document.createElement('a');
       myLink.href = URL.createObjectURL(new Blob([myText]));
       myLink.download = document.getElementById('myExportName').value + ".h";
@@ -669,14 +509,8 @@
 
     function myCollect(myID) {
       const myVideo = document.getElementById('myVideo1');
-      if (!myVideo.srcObject) {
-        myLog("ERROR: Camera not started!");
-        return;
-      }
-      
+      if (!myVideo.srcObject) { myLog("ERROR: Camera not started!"); return; }
       let myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]);
-      
-      // Convert to grayscale if in grayscale mode
       if (myIsGrayscaleMode) {
         const myOldFrame = myFrame;
         myFrame = tf.tidy(() => {
@@ -687,26 +521,15 @@
         });
         myOldFrame.dispose();
       }
-      
       const myOldFrame2 = myFrame;
       myFrame = myFrame.div(255.0).expandDims(0);
       myOldFrame2.dispose();
-      
       const frameData = myFrame.dataSync();
       let hasNaN = false;
       for (let i = 0; i < frameData.length; i++) {
-        if (isNaN(frameData[i]) || !isFinite(frameData[i])) {
-          hasNaN = true;
-          break;
-        }
+        if (isNaN(frameData[i]) || !isFinite(frameData[i])) { hasNaN = true; break; }
       }
-      
-      if (hasNaN) {
-        myLog("ERROR: Invalid camera frame detected, skipping");
-        myFrame.dispose();
-        return;
-      }
-      
+      if (hasNaN) { myLog("ERROR: Invalid camera frame detected, skipping"); myFrame.dispose(); return; }
       if (myTrainData[myID].length < myMaxBuffer) {
         myTrainData[myID].push(myFrame);
       } else {
@@ -714,34 +537,26 @@
         myTrainData[myID].shift();
         myTrainData[myID].push(myFrame);
       }
-      
       document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
       myLog(`Class ${myID} Captured (Total: ${myTrainData[myID].length})`);
-      myUpdateEpochHint();  // Update hint when data changes
+      myUpdateEpochHint();
     }
 
     function myLoadImages(myID) {
       const myInput = document.createElement('input');
-      myInput.type = 'file';
-      myInput.multiple = true;
-      myInput.accept = 'image/*';
-      
+      myInput.type = 'file'; myInput.multiple = true; myInput.accept = 'image/*';
       myInput.onchange = async (e) => {
         const files = Array.from(e.target.files);
         myLog(`Loading ${files.length} images for Class ${myID}...`);
-        
         let loaded = 0;
         for (const file of files) {
           try {
             const img = new Image();
             const url = URL.createObjectURL(file);
-            
             await new Promise((resolve, reject) => {
               img.onload = () => {
                 try {
                   let tensor = tf.browser.fromPixels(img).resizeBilinear([64,64]);
-                  
-                  // Convert to grayscale if in grayscale mode
                   if (myIsGrayscaleMode) {
                     const myOldTensor = tensor;
                     tensor = tf.tidy(() => {
@@ -752,21 +567,14 @@
                     });
                     myOldTensor.dispose();
                   }
-                  
                   const myOldTensor2 = tensor;
                   tensor = tensor.div(255.0).expandDims(0);
                   myOldTensor2.dispose();
-                  
-                  // Validate tensor
                   const data = tensor.dataSync();
                   let isValid = true;
                   for (let i = 0; i < data.length; i++) {
-                    if (isNaN(data[i]) || !isFinite(data[i])) {
-                      isValid = false;
-                      break;
-                    }
+                    if (isNaN(data[i]) || !isFinite(data[i])) { isValid = false; break; }
                   }
-                  
                   if (isValid) {
                     if (myTrainData[myID].length < myMaxBuffer) {
                       myTrainData[myID].push(tensor);
@@ -776,60 +584,37 @@
                       myTrainData[myID].push(tensor);
                     }
                     loaded++;
-                  } else {
-                    tensor.dispose();
-                  }
-                  
+                  } else { tensor.dispose(); }
                   URL.revokeObjectURL(url);
                   resolve();
-                } catch (err) {
-                  URL.revokeObjectURL(url);
-                  reject(err);
-                }
+                } catch (err) { URL.revokeObjectURL(url); reject(err); }
               };
-              img.onerror = () => {
-                URL.revokeObjectURL(url);
-                reject(new Error('Failed to load image'));
-              };
+              img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load image')); };
               img.src = url;
             });
-          } catch (err) {
-            console.error('Error loading image:', err);
-          }
+          } catch (err) { console.error('Error loading image:', err); }
         }
-        
         document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
         myLog(`Class ${myID}: Loaded ${loaded}/${files.length} images (Total: ${myTrainData[myID].length})`);
-        myUpdateEpochHint();  // Update hint when data changes
+        myUpdateEpochHint();
       };
-      
       myInput.click();
     }
 
     function myClearImages(myID) {
-      if (myTrainData[myID].length === 0) {
-        myLog(`Class ${myID}: Already empty`);
-        return;
-      }
-      
+      if (myTrainData[myID].length === 0) { myLog(`Class ${myID}: Already empty`); return; }
       const count = myTrainData[myID].length;
-      
-      // Dispose all tensors
       myTrainData[myID].forEach(tensor => tensor.dispose());
       myTrainData[myID] = [];
-      
       document.getElementById('myCount' + myID).innerHTML = `0 samples`;
       myLog(`Class ${myID}: Cleared ${count} samples`);
-      myUpdateEpochHint();  // Update hint when data changes
+      myUpdateEpochHint();
     }
 
     async function mySaveModel() { await myModel.save('downloads://my-tfjs-model'); myLog("TFJS Model Saved"); }
     async function myLoadModel() {
         const myU = document.createElement('input'); myU.type = 'file'; myU.multiple = true;
-        myU.onchange = async (e) => { 
-            myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); 
-            myLog("TFJS Model Loaded");
-        };
+        myU.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog("TFJS Model Loaded"); };
         myU.click();
     }
   </script>
@@ -875,6 +660,7 @@ function myTextGrow(myT, myC) {
   });
 })();
 </script>
+
 
 
 
