@@ -1,6 +1,6 @@
 #include "esp_camera.h"
 #include "img_converters.h"
-#include "myModel.h"
+#include "myModel.h" 
 
 // --- 1. CONFIGURATION & BUFFERS ---
 #ifdef USE_GRAYSCALE_MODE
@@ -13,7 +13,7 @@ float myConv1Output[62 * 62 * 4];
 float myPool1Output[31 * 31 * 4];
 float myConv2Output[29 * 29 * 8];
 
-// --- CLIP HELPER ---
+// OVERFLOW PROTECTION
 inline float clipValue(float val, float minVal = -100.0f, float maxVal = 100.0f) {
     if (isnan(val) || isinf(val)) return 0.0f;
     if (val < minVal) return minVal;
@@ -30,7 +30,7 @@ inline float clipValue(float val, float minVal = -100.0f, float maxVal = 100.0f)
   float myOutput_w_scale=1, myOutput_b_scale=1;
 #endif
 
-// --- CAMERA PINS (XIAO ESP32S3 Sense) ---
+// Camera Pins
 #define XCLK_GPIO_NUM 10
 #define SIOD_GPIO_NUM 40
 #define SIOC_GPIO_NUM 39
@@ -74,7 +74,6 @@ void myConv1() {
                     }
                 }
 #endif
-
                 sum += GET_W(myConv1_b, f, myConv1_b_scale);
                 sum = clipValue(sum);
                 myConv1Output[outBase + (y*62 + x)] = (sum > 0) ? sum : 0;
@@ -101,7 +100,7 @@ void myMaxPool1() {
     }
 }
 
-// --- 4. CONV2 ---
+// --- 4. CONV2 (ONLY activation changed) ---
 void myConv2() {
     for (int f = 0; f < 8; f++) {
         int outBase = f * 841;
@@ -119,41 +118,25 @@ void myConv2() {
                         }
                     }
                 }
+                sum += GET_W(myConv2_b, f, myConv2_b_scale);
+                sum = clipValue(sum);
 
-              sum += GET_W(myConv2_b, f, myConv2_b_scale);
-              sum = clipValue(sum);
-
-               /// normal ReLU
-              //  myConv2Output[outBase + (y*29 + x)] = (sum > 0) ? sum : 0;
-
-              // LeakyReLU activation (THIS is where myAct lives)
-              float myAct = (sum > 0) ? sum : (0.1f * sum);
-              myConv2Output[outBase + (y*29 + x)] = myAct;
-
+                // CHANGE 2: LeakyReLU (instead of ReLU)
+                float myAct = (sum > 0) ? sum : (0.1f * sum);
+                myConv2Output[outBase + (y*29 + x)] = myAct;
             }
         }
     }
 }
 
-// --- 5. DENSE + DEBUG (STEP 4) ---
+// --- 5. DENSE ---
 int myGetWinner() {
-    float myLogits[3] = {0,0,0};
-    int totalFeatures = 29*29*8;
+    float myLogits[3] = {0, 0, 0};
+    int totalFeatures = 29 * 29 * 8;
 
     for (int i = 0; i < 3; i++) {
         double sum = 0, c = 0;
-
         for (int j = 0; j < totalFeatures; j++) {
-
-            // ===== STEP 4 DEBUG =====
-            if (i == 0 && j < 10) {
-                Serial.print("Conv2[");
-                Serial.print(j);
-                Serial.print("]=");
-                Serial.println(myConv2Output[j], 6);
-            }
-            // ========================
-
             double term = (double)myConv2Output[j] *
                           GET_W(myOutput_w, i*totalFeatures + j, myOutput_w_scale);
             double y = term - c;
@@ -169,7 +152,7 @@ int myGetWinner() {
     return win;
 }
 
-// --- 6. CAMERA PROCESSING (STEP 3) ---
+// --- 6. IMAGE PROCESSING ---
 void myProcessCamera(camera_fb_t *fb) {
     uint8_t *rgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
     if (!rgb) return;
@@ -192,11 +175,13 @@ void myProcessCamera(camera_fb_t *fb) {
             float b = rgb[idx+2];
 
 #ifdef USE_GRAYSCALE_MODE
-            float gray = (r*0.299f) + (g*0.587f) + (b*0.114f);
-            float norm = (gray - 127.5f) / 127.5f;   // STEP 3
+            float gray = (r * 0.299f) + (g * 0.587f) + (b * 0.114f);
+
+            // CHANGE 1: mean-centered grayscale
+            float norm = (gray - 127.5f) / 127.5f;
             myInputBuffer[y*64 + x] = norm;
 #else
-            int o = (y*64 + x)*3;
+            int o = (y*64 + x) * 3;
             myInputBuffer[o]   = r / 255.0f;
             myInputBuffer[o+1] = g / 255.0f;
             myInputBuffer[o+2] = b / 255.0f;
@@ -206,37 +191,23 @@ void myProcessCamera(camera_fb_t *fb) {
     free(rgb);
 }
 
-void setup() {
-    Serial.begin(115200);
-    camera_config_t c;
-    c.ledc_channel = LEDC_CHANNEL_0;
-    c.ledc_timer = LEDC_TIMER_0;
-    c.pin_d0 = Y2_GPIO_NUM; c.pin_d1 = Y3_GPIO_NUM;
-    c.pin_d2 = Y4_GPIO_NUM; c.pin_d3 = Y5_GPIO_NUM;
-    c.pin_d4 = Y6_GPIO_NUM; c.pin_d5 = Y7_GPIO_NUM;
-    c.pin_d6 = Y8_GPIO_NUM; c.pin_d7 = Y9_GPIO_NUM;
-    c.pin_xclk = XCLK_GPIO_NUM;
-    c.pin_pclk = PCLK_GPIO_NUM;
-    c.pin_vsync = VSYNC_GPIO_NUM;
-    c.pin_href = HREF_GPIO_NUM;
-    c.pin_sscb_sda = SIOD_GPIO_NUM;
-    c.pin_sscb_scl = SIOC_GPIO_NUM;
-    c.pin_pwdn = -1;
-    c.pin_reset = -1;
-    c.xclk_freq_hz = 10000000;
-    c.frame_size = FRAMESIZE_QVGA;
-    c.pixel_format = PIXFORMAT_JPEG;
-    c.fb_location = CAMERA_FB_IN_PSRAM;
-    c.fb_count = 1;
-    c.jpeg_quality = 12;
-    esp_camera_init(&c);
-}
-
 void loop() {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) return;
     myProcessCamera(fb);
     esp_camera_fb_return(fb);
+
+    // A0 DEBUG MODE
+    if (analogRead(A0) > 2000) {
+        int zeros = 0;
+        for (int i = 0; i < 29*29*8; i++) {
+            if (myConv2Output[i] == 0.0f) zeros++;
+        }
+        Serial.print("Conv2 zero rate: ");
+        Serial.print((zeros * 100) / (29*29*8));
+        Serial.println("%");
+        delay(2000);
+    }
 
     myConv1();
     myMaxPool1();
@@ -246,5 +217,5 @@ void loop() {
     Serial.print("Class: ");
     Serial.println(r);
 
-    delay(3);
+    delay(100);
 }
