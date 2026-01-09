@@ -96,7 +96,9 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 
 
+Notes t3 new web debug
 
+74 new web extra and new esp  try seperately
 
 
 
