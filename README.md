@@ -96,7 +96,8 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 
 
-<h1> Note: Recent stable final version </h1> 
+<h1> Note: Recent stable final version bare metal vision to the XIAOML kit</h1> 
+
 [torchjs00.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs00.html) is copyied from [torchjs72.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs72.html)
 
 
