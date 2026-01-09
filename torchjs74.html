@@ -1297,6 +1297,89 @@ void loop() {
             Serial.print(" "); 
         }
         Serial.println();
+        
+        // 4b. DEEP WEIGHT ANALYSIS
+        Serial.println("\n--- Deep Weight Check ---");
+        
+        // Count Conv1 weights
+        #ifdef USE_GRAYSCALE_MODE
+          int conv1WeightCount = 3*3*1*4;  // 36 weights
+        #else
+          int conv1WeightCount = 3*3*3*4;  // 108 weights
+        #endif
+        Serial.print("Conv1 expected weights: "); Serial.println(conv1WeightCount);
+        
+        // Sample Conv1 weights at different positions
+        Serial.print("Conv1_w[middle 54]: "); Serial.println(GET_W(myConv1_w, 54, myConv1_w_scale), 4);
+        Serial.print("Conv1_w[last]: "); Serial.println(GET_W(myConv1_w, conv1WeightCount-1, myConv1_w_scale), 4);
+        
+        // Conv2 weights
+        int conv2WeightCount = 3*3*4*8;  // 288 weights
+        Serial.print("Conv2 expected weights: "); Serial.println(conv2WeightCount);
+        Serial.print("Conv2_w[0-2]: ");
+        for (int i = 0; i < 3; i++) {
+            Serial.print(GET_W(myConv2_w, i, myConv2_w_scale), 4); Serial.print(" ");
+        }
+        Serial.println();
+        Serial.print("Conv2_w[last]: "); Serial.println(GET_W(myConv2_w, conv2WeightCount-1, myConv2_w_scale), 4);
+        
+        // Output weights
+        int outputWeightCount = 29*29*8*3;  // 20232 weights
+        Serial.print("Output expected weights: "); Serial.println(outputWeightCount);
+        Serial.print("Output_w[1000]: "); Serial.println(GET_W(myOutput_w, 1000, myOutput_w_scale), 4);
+        Serial.print("Output_w[10000]: "); Serial.println(GET_W(myOutput_w, 10000, myOutput_w_scale), 4);
+        Serial.print("Output_w[last]: "); Serial.println(GET_W(myOutput_w, outputWeightCount-1, myOutput_w_scale), 4);
+
+        // 4c. CONVOLUTION SANITY CHECK
+        Serial.println("\n--- Conv1 Single Pixel Test ---");
+        // Test one pixel computation manually
+        float testSum = 0;
+        int testY = 10, testX = 10, testFilter = 0;
+        #ifdef USE_GRAYSCALE_MODE
+          for (int ky = 0; ky < 3; ky++) {
+              for (int kx = 0; kx < 3; kx++) {
+                  int pIdx = (testY+ky)*64 + (testX+kx);
+                  int wIdx = (testFilter*9) + (ky*3) + kx;
+                  float pixVal = myInputBuffer[pIdx];
+                  float weight = GET_W(myConv1_w, wIdx, myConv1_w_scale);
+                  testSum += pixVal * weight;
+                  if (ky == 1 && kx == 1) {  // Center pixel
+                      Serial.print("  Center pixel: input="); Serial.print(pixVal, 4);
+                      Serial.print(" weight="); Serial.println(weight, 4);
+                  }
+              }
+          }
+        #else
+          for (int ky = 0; ky < 3; ky++) {
+              for (int kx = 0; kx < 3; kx++) {
+                  int pIdx = ((testY+ky)*64 + (testX+kx))*3;
+                  int wIdx = (testFilter*27) + (ky*9) + (kx*3);
+                  float r = myInputBuffer[pIdx];
+                  float g = myInputBuffer[pIdx+1];
+                  float b = myInputBuffer[pIdx+2];
+                  float wr = GET_W(myConv1_w, wIdx, myConv1_w_scale);
+                  float wg = GET_W(myConv1_w, wIdx+1, myConv1_w_scale);
+                  float wb = GET_W(myConv1_w, wIdx+2, myConv1_w_scale);
+                  testSum += r*wr + g*wg + b*wb;
+                  if (ky == 1 && kx == 1) {  // Center pixel
+                      Serial.print("  Center pixel RGB: ["); 
+                      Serial.print(r, 3); Serial.print(","); 
+                      Serial.print(g, 3); Serial.print(","); 
+                      Serial.print(b, 3); Serial.println("]");
+                      Serial.print("  Weights RGB: [");
+                      Serial.print(wr, 4); Serial.print(",");
+                      Serial.print(wg, 4); Serial.print(",");
+                      Serial.print(wb, 4); Serial.println("]");
+                  }
+              }
+          }
+        #endif
+        testSum += GET_W(myConv1_b, testFilter, myConv1_b_scale);
+        float testOutput = (testSum > 0) ? testSum : (0.1f * testSum);
+        Serial.print("Manual Conv1 output at ["); Serial.print(testY); Serial.print(","); Serial.print(testX);
+        Serial.print("] filter 0: "); Serial.print(testOutput, 4);
+        Serial.print(" (stored value: "); Serial.print(myConv1Output[testFilter*3844 + testY*62 + testX], 4);
+        Serial.println(")");
 
         // 5. LOGITS BEFORE SOFTMAX
         Serial.println("\nLogits (before softmax):");
@@ -1356,7 +1439,6 @@ void loop() {
     Serial.print(" ("); Serial.print(myClassLabels[result]); Serial.println(")");
     delay(50);
 }
-
 
   
 </textarea>
