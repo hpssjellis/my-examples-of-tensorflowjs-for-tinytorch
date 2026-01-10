@@ -128,11 +128,6 @@ bool myInitSD() {
   return true;
 }
 
-  if (!SD.exists(MY_MODEL_FOLDER)) {
-    SD.mkdir(MY_MODEL_FOLDER);
-  }
-  return true;
-}
 
 // =========================
 // MODEL INITIALIZATION
