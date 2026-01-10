@@ -260,8 +260,6 @@ void setup() {
   Serial.println("esp32-train ready");
 }
 
-  Serial.println("esp32-train ready");
-}
 
 void loop() {
   if (digitalRead(MY_TRAIN_TRIGGER_PIN) == LOW) {
