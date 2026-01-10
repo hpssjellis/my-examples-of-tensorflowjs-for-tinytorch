@@ -1,6 +1,6 @@
 Started Jan 10, 2026
 
-This folder has the best so far programs for on device [XIAO ML kit](https://www.seeedstudio.com/The-XIAOML-Kit.html) training.
+This folder has the best so far of the programs for on device [XIAO ML kit](https://www.seeedstudio.com/The-XIAOML-Kit.html) training. Another folder has the raw drafts.
 
 
 sd card structure
