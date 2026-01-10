@@ -1,49 +1,864 @@
+/*
+ * ESP32-S3 On-Device CNN Training - UPDATED VERSION
+ * 1. Loads images from /images/ folder
+ * 2. Saves/Loads binary weights from /header/myWeights.bin for permanence
+ * Press A0 to start training, saves myModel.h to SD /header/ folder
+ */
+
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <vector>
+
+// USER PARAMETERS
+#define USE_GRAYSCALE_MODE false
+#define USE_INT8_QUANTIZATION false
+float LEARNING_RATE = 0.001; [cite: 1]
+float DROPOUT_RATE = 0.3; [cite: 2]
+int BATCH_SIZE = 6;
+int TARGET_EPOCHS = 10;
+int MAX_IMAGES_PER_CLASS = 100;
+bool USE_AUGMENTATION = true;
+float BRIGHTNESS_RANGE = 0.2; [cite: 3]
+float CONTRAST_RANGE = 0.4;
+
+// CAMERA PINS
+#define XCLK_GPIO_NUM 10
+#define SIOD_GPIO_NUM 40
+#define SIOC_GPIO_NUM 39
+#define Y9_GPIO_NUM 48
+#define Y8_GPIO_NUM 11
+#define Y7_GPIO_NUM 12
+#define Y6_GPIO_NUM 14
+#define Y5_GPIO_NUM 16
+#define Y4_GPIO_NUM 18
+#define Y3_GPIO_NUM 17
+#define Y2_GPIO_NUM 15
+#define VSYNC_GPIO_NUM 38
+#define HREF_GPIO_NUM 47
+#define PCLK_GPIO_NUM 13
+
+// MODEL ARCHITECTURE
+const int INPUT_CHANNELS = USE_GRAYSCALE_MODE ? 1 : 3; [cite: 4]
+const int FLATTENED_SIZE = 6728;
+
+// WEIGHTS
+float *conv1_w, *conv1_b, *conv2_w, *conv2_b, *dense_w, *dense_b; [cite: 4]
+float *conv1_w_grad, *conv1_b_grad, *conv2_w_grad, *conv2_b_grad, *dense_w_grad, *dense_b_grad; [cite: 5]
+float *conv1_w_m, *conv1_w_v, *conv1_b_m, *conv1_b_v;
+float *conv2_w_m, *conv2_w_v, *conv2_b_m, *conv2_b_v; [cite: 6]
+float *dense_w_m, *dense_w_v, *dense_b_m, *dense_b_v;
+
+// BUFFERS
+float *input_buffer, *conv1_output, *pool1_output, *conv2_output, *dropout_mask, *dense_output;
+float *dense_grad, *conv2_grad, *pool1_grad, *conv1_grad; [cite: 6]
+
+// DATA
+struct TrainingImage { float* data; int label; }; [cite: 7]
+std::vector<TrainingImage> training_data;
+String class_labels[3];
+int class_counts[3] = {0,0,0};
+
+// UTILITY
+inline float clip_value(float v, float mn=-100, float mx=100) {
+  if(isnan(v)||isinf(v)) return 0;
+  return constrain(v,mn,mx); [cite: 8, 9]
+}
+inline float leaky_relu(float x) { return x>0 ? x : 0.1f*x; } [cite: 9]
+inline float leaky_relu_deriv(float x) { return x>0 ? 1.0f : 0.1f; } [cite: 10]
+float random_float(float mn, float mx) { return mn + (float)random(10000)/10000.0f*(mx-mn); } [cite: 10, 11]
+
+String toCString(String s) {
+  s = s.substring(0,20);
+  s.replace("\\","\\\\"); s.replace("\"","\\\""); s.replace("\n","\\n");
+  return s; [cite: 11, 12]
+}
+
+// MEMORY ALLOCATION
+bool allocate_model_memory() {
+  Serial.println("\n=== Allocating Memory ===");
+  int c1w_sz = 3*3*INPUT_CHANNELS*4;
+  int c2w_sz = 3*3*4*8;
+  int dw_sz = FLATTENED_SIZE*3; [cite: 12, 13]
+  
+  conv1_w = (float*)ps_malloc(c1w_sz*sizeof(float));
+  conv1_b = (float*)ps_malloc(4*sizeof(float));
+  conv2_w = (float*)ps_malloc(c2w_sz*sizeof(float));
+  conv2_b = (float*)ps_malloc(8*sizeof(float));
+  dense_w = (float*)ps_malloc(dw_sz*sizeof(float));
+  dense_b = (float*)ps_malloc(3*sizeof(float)); [cite: 13, 14]
+  
+  conv1_w_grad = (float*)ps_malloc(c1w_sz*sizeof(float));
+  conv1_b_grad = (float*)ps_malloc(4*sizeof(float));
+  conv2_w_grad = (float*)ps_malloc(c2w_sz*sizeof(float));
+  conv2_b_grad = (float*)ps_malloc(8*sizeof(float));
+  dense_w_grad = (float*)ps_malloc(dw_sz*sizeof(float));
+  dense_b_grad = (float*)ps_malloc(3*sizeof(float)); [cite: 14, 15]
+  
+  conv1_w_m = (float*)ps_calloc(c1w_sz, sizeof(float));
+  conv1_w_v = (float*)ps_calloc(c1w_sz, sizeof(float));
+  conv1_b_m = (float*)ps_calloc(4, sizeof(float));
+  conv1_b_v = (float*)ps_calloc(4, sizeof(float));
+  conv2_w_m = (float*)ps_calloc(c2w_sz, sizeof(float));
+  conv2_w_v = (float*)ps_calloc(c2w_sz, sizeof(float));
+  conv2_b_m = (float*)ps_calloc(8, sizeof(float));
+  conv2_b_v = (float*)ps_calloc(8, sizeof(float));
+  dense_w_m = (float*)ps_calloc(dw_sz, sizeof(float)); [cite: 15, 16]
+  dense_w_v = (float*)ps_calloc(dw_sz, sizeof(float));
+  dense_b_m = (float*)ps_calloc(3, sizeof(float));
+  dense_b_v = (float*)ps_calloc(3, sizeof(float)); [cite: 17]
+  
+  input_buffer = (float*)ps_malloc(64*64*INPUT_CHANNELS*sizeof(float));
+  conv1_output = (float*)ps_malloc(62*62*4*sizeof(float));
+  pool1_output = (float*)ps_malloc(31*31*4*sizeof(float));
+  conv2_output = (float*)ps_malloc(29*29*8*sizeof(float));
+  dropout_mask = (float*)ps_malloc(FLATTENED_SIZE*sizeof(float));
+  dense_output = (float*)ps_malloc(3*sizeof(float)); [cite: 17, 18]
+  
+  dense_grad = (float*)ps_malloc(FLATTENED_SIZE*sizeof(float));
+  conv2_grad = (float*)ps_malloc(29*29*8*sizeof(float));
+  pool1_grad = (float*)ps_malloc(31*31*4*sizeof(float));
+  conv1_grad = (float*)ps_malloc(62*62*4*sizeof(float)); [cite: 19]
+  
+  if(!conv1_w || !conv2_w || !dense_w) { Serial.println("[ERR] Alloc failed!"); return false; } [cite: 19, 20]
+  Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
+  return true;
+}
+
+// Helper to load binary weights for permanence
+bool myLoadWeightsFromSD() {
+  if(!SD.exists("/header/myWeights.bin")) return false;
+  fs::File myWeightFile = SD.open("/header/myWeights.bin", FILE_READ);
+  if(!myWeightFile) return false;
+
+  int myC1sz = (USE_GRAYSCALE_MODE ? 36 : 108);
+  myWeightFile.read((uint8_t*)conv1_w, myC1sz * sizeof(float));
+  myWeightFile.read((uint8_t*)conv1_b, 4 * sizeof(float));
+  myWeightFile.read((uint8_t*)conv2_w, 288 * sizeof(float));
+  myWeightFile.read((uint8_t*)conv2_b, 8 * sizeof(float));
+  myWeightFile.read((uint8_t*)dense_w, (FLATTENED_SIZE * 3) * sizeof(float));
+  myWeightFile.read((uint8_t*)dense_b, 3 * sizeof(float));
+  
+  myWeightFile.close();
+  return true;
+}
+
+void initialize_weights() {
+  if(myLoadWeightsFromSD()) {
+    Serial.println("Existing weights found in /header/myWeights.bin. Resuming...");
+    return;
+  }
+
+  Serial.println("No saved weights found. Initializing randomly...");
+  int c1w_sz = USE_GRAYSCALE_MODE ? 36 : 108; [cite: 20, 21]
+  float c1std = sqrt(2.0/(9.0*INPUT_CHANNELS));
+  for(int i=0; i<c1w_sz; i++) conv1_w[i] = random_float(-c1std, c1std);
+  for(int i=0; i<4; i++) conv1_b[i] = 0; [cite: 22]
+  
+  float c2std = sqrt(2.0/36.0);
+  for(int i=0; i<288; i++) conv2_w[i] = random_float(-c2std, c2std);
+  for(int i=0; i<8; i++) conv2_b[i] = 0; [cite: 23]
+  
+  float dstd = sqrt(2.0/FLATTENED_SIZE);
+  for(int i=0; i<FLATTENED_SIZE*3; i++) dense_w[i] = random_float(-dstd, dstd);
+  for(int i=0; i<3; i++) dense_b[i] = 0; [cite: 24]
+}
+
+// IMAGE LOADING
+bool load_image_from_file(const char* path, float* buf) {
+  fs::File f = SD.open(path);
+  if(!f) return false; [cite: 25]
+  
+  size_t sz = f.size();
+  uint8_t* jpg = (uint8_t*)ps_malloc(sz);
+  if(!jpg) { f.close(); return false; }
+  f.read(jpg, sz);
+  f.close(); [cite: 26]
+  
+  uint8_t* rgb = (uint8_t*)ps_malloc(320*240*3);
+  if(!rgb) { free(jpg); return false; } [cite: 27]
+  
+  bool ok = fmt2rgb888(jpg, sz, PIXFORMAT_JPEG, rgb);
+  free(jpg);
+  if(!ok) { free(rgb); return false; } [cite: 28]
+  
+  for(int y=0; y<64; y++) {
+    for(int x=0; x<64; x++) {
+      int sy = (int)((y+0.5)*240.0/64.0);
+      int sx = (int)((x+0.5)*320.0/64.0); [cite: 29]
+      if(sy>239) sy=239;
+      if(sx>319) sx=319;
+      int idx = (sy*320+sx)*3;
+      if(USE_GRAYSCALE_MODE) { [cite: 30]
+        buf[y*64+x] = (rgb[idx]*0.299 + rgb[idx+1]*0.587 + rgb[idx+2]*0.114)/255.0; [cite: 31]
+      } else {
+        int b = (y*64+x)*3;
+        buf[b] = rgb[idx]/255.0;
+        buf[b+1] = rgb[idx+1]/255.0;
+        buf[b+2] = rgb[idx+2]/255.0; [cite: 32]
+      }
+    }
+  }
+  
+  free(rgb);
+  return true; [cite: 33]
+}
+
 void load_images_from_sd() {
   Serial.println("\n=== Loading Images ===");
-  // Updated: Now opens the /images directory instead of root 
-  File root = SD.open("/images");
-  if(!root) { Serial.println("[ERR] SD /images folder not found"); return; }
+  fs::File myRoot = SD.open("/images");
+  if(!myRoot) { Serial.println("[ERR] SD /images folder not found"); return; } [cite: 34]
   
-  int cls = 0;
-  File folder = root.openNextFile();
-  while(folder && cls < 3) {
-    if(folder.isDirectory()) {
-      String name = String(folder.name());
-      if(name.startsWith(".") || name=="header") {
-        folder = root.openNextFile();
-        continue;
+  int myCls = 0;
+  fs::File myFolder = myRoot.openNextFile();
+  while(myFolder && myCls < 3) { [cite: 35]
+    if(myFolder.isDirectory()) {
+      String myName = String(myFolder.name());
+      if(myName.startsWith(".") || myName=="header" || myName=="System Volume Information") { [cite: 36]
+        myFolder = myRoot.openNextFile();
+        continue; [cite: 37]
       }
       
-      class_labels[cls] = name;
-      Serial.printf("\nClass %d: %s\n", cls, name.c_str());
-      File img = folder.openNextFile();
-      int loaded = 0;
+      class_labels[myCls] = myName;
+      Serial.printf("\nClass %d: %s\n", myCls, myName.c_str()); [cite: 38]
+      fs::File myImg = myFolder.openNextFile();
+      int myLoadedCount = 0;
       
-      while(img && loaded < MAX_IMAGES_PER_CLASS) {
-        if(!img.isDirectory()) {
-          String fn = String(img.name());
-          if(fn.endsWith(".jpg") || fn.endsWith(".JPG")) {
-            // Updated: Path now includes the /images/ prefix 
-            String path = "/images/" + name + "/" + fn;
-            float* ib = (float*)ps_malloc(64*64*INPUT_CHANNELS*sizeof(float));
-            if(ib && load_image_from_file(path.c_str(), ib)) {
-              TrainingImage ti;
-              ti.data = ib;
-              ti.label = cls;
-              training_data.push_back(ti);
-              loaded++;
-              class_counts[cls]++;
+      while(myImg && myLoadedCount < MAX_IMAGES_PER_CLASS) {
+        if(!myImg.isDirectory()) {
+          String myFileName = String(myImg.name()); [cite: 39]
+          if(myFileName.endsWith(".jpg") || myFileName.endsWith(".JPG")) {
+            String myPath = "/images/" + myName + "/" + myFileName; [cite: 40]
+            float* myIb = (float*)ps_malloc(64*64*INPUT_CHANNELS*sizeof(float));
+            if(myIb && load_image_from_file(myPath.c_str(), myIb)) {
+              TrainingImage myTi; [cite: 41]
+              myTi.data = myIb;
+              myTi.label = myCls;
+              training_data.push_back(myTi);
+              myLoadedCount++;
+              class_counts[myCls]++;
             } else {
-              if(ib) free(ib);
+              if(myIb) free(myIb); [cite: 42]
             }
           }
         }
-        img = folder.openNextFile();
+        myImg = myFolder.openNextFile(); [cite: 43]
       }
-      Serial.printf("  Loaded: %d\n", loaded);
-      cls++;
+      
+      Serial.printf("  Loaded: %d\n", myLoadedCount);
+      myCls++; [cite: 44]
     }
-    folder = root.openNextFile();
+    myFolder = myRoot.openNextFile();
   }
-  Serial.printf("\nTotal: %d [%d,%d,%d]\n", training_data.size(), class_counts[0], class_counts[1], class_counts[2]);
+  
+  Serial.printf("\nTotal: %d [%d,%d,%d]\n", training_data.size(), class_counts[0], class_counts[1], class_counts[2]); [cite: 45]
+}
+
+void augment_image(float* src, float* dst) {
+  int sz = 64*64*INPUT_CHANNELS;
+  if(!USE_AUGMENTATION) { memcpy(dst, src, sz*sizeof(float)); return; } [cite: 46]
+  
+  float br = random_float(-BRIGHTNESS_RANGE, BRIGHTNESS_RANGE);
+  float co = random_float(1.0-CONTRAST_RANGE/2, 1.0+CONTRAST_RANGE/2); [cite: 47]
+  for(int i=0; i<sz; i++) {
+    dst[i] = clip_value((src[i]-0.5)*co+0.5+br, 0.0, 1.0); [cite: 48]
+  }
+}
+
+// FORWARD PASS FUNCTIONS
+void forward_conv1() {
+  for(int f=0; f<4; f++) {
+    int ob = f*3844; [cite: 49]
+    for(int y=0; y<62; y++) {
+      for(int x=0; x<62; x++) {
+        float s = 0; [cite: 50]
+        if(USE_GRAYSCALE_MODE) {
+          for(int ky=0; ky<3; ky++)
+            for(int kx=0; kx<3; kx++)
+              s += input_buffer[(y+ky)*64+(x+kx)] * conv1_w[f*9+ky*3+kx]; [cite: 51]
+        } else {
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              int p = ((y+ky)*64+(x+kx))*3; [cite: 52]
+              int w = f*27+ky*9+kx*3;
+              s += input_buffer[p]*conv1_w[w] + input_buffer[p+1]*conv1_w[w+1] + input_buffer[p+2]*conv1_w[w+2]; [cite: 53]
+            }
+          }
+        }
+        conv1_output[ob+y*62+x] = leaky_relu(clip_value(s+conv1_b[f])); [cite: 54]
+      }
+    }
+  }
+}
+
+void forward_pool1() {
+  for(int f=0; f<4; f++) {
+    int ib=f*3844, ob=f*961; [cite: 55]
+    for(int y=0; y<31; y++) {
+      for(int x=0; x<31; x++) {
+        int iy=y*2, ix=x*2; [cite: 56]
+        float m = conv1_output[ib+iy*62+ix];
+        m = max(m, conv1_output[ib+iy*62+ix+1]);
+        m = max(m, conv1_output[ib+(iy+1)*62+ix]);
+        m = max(m, conv1_output[ib+(iy+1)*62+ix+1]);
+        pool1_output[ob+y*31+x] = m; [cite: 57]
+      }
+    }
+  }
+}
+
+void forward_conv2() {
+  for(int f=0; f<8; f++) {
+    int ob=f*841; [cite: 58]
+    for(int y=0; y<29; y++) {
+      for(int x=0; x<29; x++) {
+        float s = 0; [cite: 59]
+        for(int c=0; c<4; c++) {
+          int ib=c*961; [cite: 60]
+          for(int ky=0; ky<3; ky++)
+            for(int kx=0; kx<3; kx++)
+              s += pool1_output[ib+(y+ky)*31+(x+kx)] * conv2_w[f*36+c*9+ky*3+kx]; [cite: 61]
+        }
+        conv2_output[ob+y*29+x] = leaky_relu(clip_value(s+conv2_b[f])); [cite: 62]
+      }
+    }
+  }
+}
+
+void forward_dropout(bool training) {
+  if(training && DROPOUT_RATE>0) {
+    float kp = 1.0-DROPOUT_RATE; [cite: 63]
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      dropout_mask[i] = (random_float(0,1)<kp) ? (1.0/kp) : 0.0;
+      conv2_output[i] *= dropout_mask[i]; [cite: 64]
+    }
+  } else {
+    for(int i=0; i<FLATTENED_SIZE; i++) dropout_mask[i] = 1.0; [cite: 65]
+  }
+}
+
+void forward_dense() {
+  for(int c=0; c<3; c++) {
+    double s=0, comp=0; [cite: 66]
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      double t = conv2_output[i]*dense_w[c*FLATTENED_SIZE+i];
+      double y = t-comp; [cite: 67]
+      double tt = s+y;
+      comp = (tt-s)-y;
+      s = tt;
+    }
+    dense_output[c] = clip_value((float)s+dense_b[c], -50, 50); [cite: 68]
+  }
+  
+  float mx = max(max(dense_output[0], dense_output[1]), dense_output[2]);
+  float es = exp(dense_output[0]-mx) + exp(dense_output[1]-mx) + exp(dense_output[2]-mx); [cite: 69]
+  for(int i=0; i<3; i++) dense_output[i] = exp(dense_output[i]-mx)/es;
+}
+
+// BACKWARD PASS FUNCTIONS
+void backward_dense(int lbl) {
+  for(int c=0; c<3; c++) {
+    float e = dense_output[c] - (c==lbl ? 1.0f : 0.0f); [cite: 70]
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      dense_w_grad[c*FLATTENED_SIZE+i] = e*conv2_output[i];
+      dense_grad[i] = (c==0) ? e*dense_w[c*FLATTENED_SIZE+i] : dense_grad[i]+e*dense_w[c*FLATTENED_SIZE+i]; [cite: 71]
+    }
+    dense_b_grad[c] = e;
+  }
+}
+
+void backward_dropout() {
+  for(int i=0; i<FLATTENED_SIZE; i++) dense_grad[i] *= dropout_mask[i]; [cite: 72]
+}
+
+void backward_conv2() {
+  for(int i=0; i<FLATTENED_SIZE; i++) conv2_grad[i] = dense_grad[i]*leaky_relu_deriv(conv2_output[i]);
+  
+  memset(conv2_w_grad, 0, 288*sizeof(float));
+  memset(conv2_b_grad, 0, 8*sizeof(float));
+  memset(pool1_grad, 0, 3844*sizeof(float)); [cite: 73]
+  for(int f=0; f<8; f++) {
+    int ob=f*841; [cite: 74]
+    for(int y=0; y<29; y++) {
+      for(int x=0; x<29; x++) {
+        float g = conv2_grad[ob+y*29+x]; [cite: 75]
+        conv2_b_grad[f] += g;
+        for(int c=0; c<4; c++) {
+          int ib=c*961; [cite: 76]
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              int pi = ib+(y+ky)*31+(x+kx); [cite: 77]
+              int wi = f*36+c*9+ky*3+kx;
+              conv2_w_grad[wi] += g*pool1_output[pi];
+              pool1_grad[pi] += g*conv2_w[wi]; [cite: 78]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void backward_pool1() {
+  memset(conv1_grad, 0, 15376*sizeof(float)); [cite: 79]
+  for(int f=0; f<4; f++) {
+    int ib=f*3844, ob=f*961; [cite: 80]
+    for(int y=0; y<31; y++) {
+      for(int x=0; x<31; x++) {
+        int iy=y*2, ix=x*2; [cite: 81]
+        float pv = pool1_output[ob+y*31+x];
+        float g = pool1_grad[ob+y*31+x];
+        if(conv1_output[ib+iy*62+ix] == pv) conv1_grad[ib+iy*62+ix] += g;
+        if(conv1_output[ib+iy*62+ix+1] == pv) conv1_grad[ib+iy*62+ix+1] += g; [cite: 82]
+        if(conv1_output[ib+(iy+1)*62+ix] == pv) conv1_grad[ib+(iy+1)*62+ix] += g;
+        if(conv1_output[ib+(iy+1)*62+ix+1] == pv) conv1_grad[ib+(iy+1)*62+ix+1] += g; [cite: 83]
+      }
+    }
+  }
+}
+
+void backward_conv1() {
+  for(int i=0; i<15376; i++) conv1_grad[i] *= leaky_relu_deriv(conv1_output[i]); [cite: 84]
+  int wsz = USE_GRAYSCALE_MODE ? 36 : 108;
+  memset(conv1_w_grad, 0, wsz*sizeof(float));
+  memset(conv1_b_grad, 0, 4*sizeof(float)); [cite: 85]
+  for(int f=0; f<4; f++) {
+    int ob=f*3844; [cite: 86]
+    for(int y=0; y<62; y++) {
+      for(int x=0; x<62; x++) {
+        float g = conv1_grad[ob+y*62+x]; [cite: 87]
+        conv1_b_grad[f] += g;
+        
+        if(USE_GRAYSCALE_MODE) {
+          for(int ky=0; ky<3; ky++)
+            for(int kx=0; kx<3; kx++)
+              conv1_w_grad[f*9+ky*3+kx] += g*input_buffer[(y+ky)*64+(x+kx)]; [cite: 88]
+        } else {
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              int p = ((y+ky)*64+(x+kx))*3; [cite: 89]
+              int w = f*27+ky*9+kx*3;
+              conv1_w_grad[w] += g*input_buffer[p];
+              conv1_w_grad[w+1] += g*input_buffer[p+1];
+              conv1_w_grad[w+2] += g*input_buffer[p+2]; [cite: 90]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ADAM UPDATE
+void adam_update(float* w, float* g, float* m, float* v, int sz, int step) {
+  float b1=0.9, b2=0.999, eps=1e-8; [cite: 91]
+  float lr_t = LEARNING_RATE * sqrt(1-pow(b2,step)) / (1-pow(b1,step));
+  for(int i=0; i<sz; i++) {
+    m[i] = b1*m[i] + (1-b1)*g[i]; [cite: 92]
+    v[i] = b2*v[i] + (1-b2)*g[i]*g[i];
+    w[i] -= lr_t*m[i]/(sqrt(v[i])+eps);
+    w[i] = clip_value(w[i], -10, 10); [cite: 93]
+  }
+}
+
+void update_weights(int step) {
+  int c1sz = USE_GRAYSCALE_MODE ? 36 : 108;
+  adam_update(conv1_w, conv1_w_grad, conv1_w_m, conv1_w_v, c1sz, step); [cite: 94]
+  adam_update(conv1_b, conv1_b_grad, conv1_b_m, conv1_b_v, 4, step);
+  adam_update(conv2_w, conv2_w_grad, conv2_w_m, conv2_w_v, 288, step);
+  adam_update(conv2_b, conv2_b_grad, conv2_b_m, conv2_b_v, 8, step); [cite: 95]
+  adam_update(dense_w, dense_w_grad, dense_w_m, dense_w_v, FLATTENED_SIZE*3, step);
+  adam_update(dense_b, dense_b_grad, dense_b_m, dense_b_v, 3, step); [cite: 96]
+}
+
+// TRAINING LOOP
+void train_model() {
+  Serial.println("\n======== TRAINING START ========");
+  int total = training_data.size(); [cite: 97]
+  int batches_per_epoch = (total + BATCH_SIZE - 1) / BATCH_SIZE;
+  int total_batches = TARGET_EPOCHS * batches_per_epoch;
+  
+  std::vector<int> indices; [cite: 98]
+  for(int i=0; i<total; i++) indices.push_back(i);
+  
+  float running_loss = 0;
+  int loss_count = 0; [cite: 99]
+  for(int batch=0; batch<total_batches; batch++) {
+    if(batch % batches_per_epoch == 0) {
+      Serial.printf("\n--- Epoch %d/%d ---\n", batch/batches_per_epoch + 1, TARGET_EPOCHS); [cite: 100]
+      for(int i=total-1; i>0; i--) {
+        int j = random(i+1);
+        int tmp = indices[i]; [cite: 101]
+        indices[i] = indices[j];
+        indices[j] = tmp;
+      }
+    }
+    
+    int batch_start = (batch % batches_per_epoch) * BATCH_SIZE; [cite: 102]
+    int batch_end = min(batch_start + BATCH_SIZE, total);
+    
+    float batch_loss = 0;
+    int correct = 0; [cite: 103]
+    for(int i=batch_start; i<batch_end; i++) {
+      int idx = indices[i];
+      TrainingImage& img = training_data[idx];
+      
+      augment_image(img.data, input_buffer); [cite: 104]
+      forward_conv1();
+      forward_pool1();
+      forward_conv2();
+      forward_dropout(true);
+      forward_dense();
+      
+      backward_dense(img.label);
+      backward_dropout();
+      backward_conv2();
+      backward_pool1();
+      backward_conv1();
+      
+      float loss = 0; [cite: 105]
+      for(int c=0; c<3; c++) {
+        float target = (c == img.label) ? 1.0f : 0.0f; [cite: 106]
+        loss -= target * log(max(dense_output[c], 1e-7f));
+      }
+      batch_loss += loss; [cite: 107]
+      int pred = (dense_output[1]>dense_output[0]) ? 1 : 0;
+      if(dense_output[2]>dense_output[pred]) pred = 2;
+      if(pred == img.label) correct++; [cite: 108]
+    }
+    
+    update_weights(batch+1);
+    
+    running_loss += batch_loss / (batch_end - batch_start);
+    loss_count++; [cite: 109]
+    if((batch+1) % 10 == 0) {
+      float avg_loss = running_loss / loss_count; [cite: 110]
+      float acc = 100.0 * correct / (batch_end - batch_start); [cite: 111]
+      Serial.printf("Batch %d/%d - Loss: %.4f, Acc: %.1f%%\n", batch+1, total_batches, avg_loss, acc); [cite: 112]
+      running_loss = 0;
+      loss_count = 0;
+    }
+  }
+  
+  Serial.println("\n======== TRAINING COMPLETE ========"); [cite: 113]
+}
+
+// DEBUG OUTPUT
+void print_debug() {
+  Serial.println("\n========== DEBUG OUTPUT ==========");
+  Serial.printf("Mode: %s %s\n", USE_GRAYSCALE_MODE?"GRAY":"RGB", USE_INT8_QUANTIZATION?"INT8":"FLOAT"); [cite: 114]
+  Serial.printf("Classes: [%s, %s, %s]\n", class_labels[0].c_str(), class_labels[1].c_str(), class_labels[2].c_str());
+  
+  augment_image(training_data[0].data, input_buffer);
+  forward_conv1();
+  forward_pool1();
+  forward_conv2();
+  forward_dropout(false);
+  forward_dense(); [cite: 115]
+  Serial.println("\nLayer Stats:");
+  
+  auto print_stats = [](const char* name, float* buf, int len) {
+    float mn=1e6, mx=-1e6, sum=0; [cite: 116]
+    int neg=0, zeros=0;
+    for(int i=0; i<len; i++) {
+      if(buf[i]<mn) mn=buf[i];
+      if(buf[i]>mx) mx=buf[i];
+      sum += buf[i]; [cite: 117]
+      if(buf[i]<0) neg++;
+      if(buf[i]==0) zeros++;
+    }
+    Serial.printf("  %s: Min=%.2f Max=%.2f Avg=%.2f Neg=%d%% Zeros=%d%%\n",
+      name, mn, mx, sum/len, (neg*100)/len, (zeros*100)/len); [cite: 118]
+  };
+  
+  print_stats("CONV1", conv1_output, 15376);
+  print_stats("POOL1", pool1_output, 3844);
+  print_stats("CONV2", conv2_output, FLATTENED_SIZE);
+  
+  Serial.println("\nWeight Samples:");
+  Serial.print("  Conv1_w[0-5]: "); [cite: 119]
+  for(int i=0; i<6; i++) { Serial.print(conv1_w[i],4); Serial.print(" "); }
+  Serial.println();
+  
+  Serial.print("  Conv1_b[0-3]: "); [cite: 120]
+  for(int i=0; i<4; i++) { Serial.print(conv1_b[i],4); Serial.print(" "); }
+  Serial.println();
+  
+  Serial.println("\nLogits:"); [cite: 121]
+  for(int i=0; i<3; i++) {
+    Serial.printf("  Class %d (%s): %.4f\n", i, class_labels[i].c_str(), log(max(dense_output[i], 1e-7f))); [cite: 122]
+  }
+  
+  Serial.println("\nProbabilities:");
+  Serial.printf("  [%.1f%%, %.1f%%, %.1f%%]\n", dense_output[0]*100, dense_output[1]*100, dense_output[2]*100); [cite: 123]
+  Serial.println("===================================\n");
+}
+
+// SAVE MODEL TO SD CARD
+bool save_model_header() {
+  Serial.println("\n=== Saving Model ==="); [cite: 124]
+  if(!SD.exists("/header")) {
+    if(!SD.mkdir("/header")) {
+      Serial.println("[ERR] Cannot create /header folder"); [cite: 125]
+      return false;
+    }
+  }
+
+  // Backup Binary weights for permanence
+  fs::File myBinFile = SD.open("/header/myWeights.bin", FILE_WRITE);
+  if(myBinFile) {
+    int myC1sz = (USE_GRAYSCALE_MODE ? 36 : 108);
+    myBinFile.write((uint8_t*)conv1_w, myC1sz * sizeof(float));
+    myBinFile.write((uint8_t*)conv1_b, 4 * sizeof(float));
+    myBinFile.write((uint8_t*)conv2_w, 288 * sizeof(float));
+    myBinFile.write((uint8_t*)conv2_b, 8 * sizeof(float));
+    myBinFile.write((uint8_t*)dense_w, (FLATTENED_SIZE * 3) * sizeof(float));
+    myBinFile.write((uint8_t*)dense_b, 3 * sizeof(float));
+    myBinFile.close();
+    Serial.println("Binary backup saved for permanence.");
+  }
+  
+  if(SD.exists("/header/myModel.h")) {
+    SD.remove("/header/myModel.h"); [cite: 126]
+    delay(100);
+  }
+  
+  fs::File file = SD.open("/header/myModel.h", FILE_WRITE); [cite: 127]
+  if(!file) {
+    Serial.println("[ERR] Cannot open /header/myModel.h");
+    return false; [cite: 128]
+  }
+  
+  file.println("// Auto-generated model");
+  file.println("#ifndef MY_MODEL_H"); [cite: 129]
+  file.println("#define MY_MODEL_H");
+  file.println();
+  
+  file.println("const char* myClassLabels[3] = {"); [cite: 130]
+  file.print("  \""); file.print(toCString(class_labels[0])); file.println("\",");
+  file.print("  \""); file.print(toCString(class_labels[1])); file.println("\",");
+  file.print("  \""); file.print(toCString(class_labels[2])); file.println("\"");
+  file.println("};");
+  file.println();
+  
+  if(USE_INT8_QUANTIZATION) file.println("#define USE_INT8_MODE"); [cite: 131]
+  if(USE_GRAYSCALE_MODE) file.println("#define USE_GRAYSCALE_MODE");
+  file.println();
+
+  // Conv1 weights
+  int c1w_sz = USE_GRAYSCALE_MODE ? 36 : 108; [cite: 132]
+  if(USE_INT8_QUANTIZATION) {
+    float mx = 0;
+    for(int i=0; i<c1w_sz; i++) if(abs(conv1_w[i])>mx) mx=abs(conv1_w[i]); [cite: 133]
+    float sc = 127.0/max(mx, 0.001f);
+    file.print("const float myConv1_w_scale = "); file.print(sc,6); file.println("f;");
+    file.print("const int8_t myConv1_w[] = { "); [cite: 134]
+    for(int i=0; i<c1w_sz; i++) {
+      file.print((int8_t)round(conv1_w[i]*sc));
+      if(i<c1w_sz-1) file.print(", ");
+      if((i+1)%20==0) file.println(); [cite: 135]
+    }
+    file.println(" };");
+  } else {
+    file.print("const float myConv1_w[] = { "); [cite: 136]
+    for(int i=0; i<c1w_sz; i++) {
+      file.print(conv1_w[i],6); file.print("f");
+      if(i<c1w_sz-1) file.print(", ");
+      if((i+1)%10==0) { file.println(); file.flush(); } [cite: 137]
+    }
+    file.println(" };");
+  }
+  file.println();
+  file.flush();
+
+  // Conv1 bias [cite: 138]
+  if(USE_INT8_QUANTIZATION) {
+    float mx=0;
+    for(int i=0; i<4; i++) if(abs(conv1_b[i])>mx) mx=abs(conv1_b[i]); [cite: 139]
+    float sc = 127.0/max(mx, 0.001f);
+    file.print("const float myConv1_b_scale = "); file.print(sc,6); file.println("f;");
+    file.print("const int8_t myConv1_b[] = { "); [cite: 140]
+    for(int i=0; i<4; i++) {
+      file.print((int8_t)round(conv1_b[i]*sc));
+      if(i<3) file.print(", ");
+    }
+    file.println(" };"); [cite: 141]
+  } else {
+    file.print("const float myConv1_b[] = { "); [cite: 142]
+    for(int i=0; i<4; i++) {
+      file.print(conv1_b[i],6); file.print("f");
+      if(i<3) file.print(", "); [cite: 143]
+    }
+    file.println(" };");
+  }
+  file.println();
+  file.flush();
+
+  // Conv2 weights (288 elements) [cite: 144]
+  if(USE_INT8_QUANTIZATION) {
+    float mx=0;
+    for(int i=0; i<288; i++) if(abs(conv2_w[i])>mx) mx=abs(conv2_w[i]); [cite: 145]
+    float sc = 127.0/max(mx, 0.001f);
+    file.print("const float myConv2_w_scale = "); file.print(sc,6); file.println("f;");
+    file.print("const int8_t myConv2_w[] = { "); [cite: 146]
+    for(int i=0; i<288; i++) {
+      file.print((int8_t)round(conv2_w[i]*sc));
+      if(i<287) file.print(", ");
+      if((i+1)%20==0) { file.println(); file.flush(); } [cite: 147]
+    }
+    file.println(" };"); [cite: 148]
+  } else {
+    file.print("const float myConv2_w[] = { "); [cite: 149]
+    for(int i=0; i<288; i++) {
+      file.print(conv2_w[i],6); file.print("f");
+      if(i<287) file.print(", ");
+      if((i+1)%10==0) { file.println(); file.flush(); } [cite: 150]
+    }
+    file.println(" };");
+  }
+  file.println();
+  file.flush();
+
+  // Conv2 bias [cite: 151]
+  if(USE_INT8_QUANTIZATION) {
+    float mx=0;
+    for(int i=0; i<8; i++) if(abs(conv2_b[i])>mx) mx=abs(conv2_b[i]); [cite: 152]
+    float sc = 127.0/max(mx, 0.001f);
+    file.print("const float myConv2_b_scale = "); file.print(sc,6); file.println("f;");
+    file.print("const int8_t myConv2_b[] = { "); [cite: 153]
+    for(int i=0; i<8; i++) {
+      file.print((int8_t)round(conv2_b[i]*sc));
+      if(i<7) file.print(", ");
+    }
+    file.println(" };"); [cite: 154]
+  } else {
+    file.print("const float myConv2_b[] = { "); [cite: 155]
+    for(int i=0; i<8; i++) {
+      file.print(conv2_b[i],6); file.print("f");
+      if(i<7) file.print(", "); [cite: 156]
+    }
+    file.println(" };");
+  }
+  file.println();
+  file.flush();
+
+  // Dense weights (write in chunks) [cite: 157]
+  Serial.println("Writing dense weights...");
+  if(USE_INT8_QUANTIZATION) {
+    float mx=0; [cite: 158]
+    for(int i=0; i<FLATTENED_SIZE*3; i++) if(abs(dense_w[i])>mx) mx=abs(dense_w[i]);
+    float sc = 127.0/max(mx, 0.001f);
+    file.print("const float myOutput_w_scale = "); file.print(sc,6); file.println("f;"); [cite: 159]
+    file.print("const int8_t myOutput_w[] = { ");
+    for(int i=0; i<FLATTENED_SIZE*3; i++) {
+      file.print((int8_t)round(dense_w[i]*sc));
+      if(i<FLATTENED_SIZE*3-1) file.print(", "); [cite: 160]
+      if((i+1)%50==0) { file.println(); file.flush(); }
+    }
+    file.println(" };"); [cite: 161]
+  } else {
+    file.print("const float myOutput_w[] = { "); [cite: 162]
+    for(int i=0; i<FLATTENED_SIZE*3; i++) {
+      file.print(dense_w[i],6); file.print("f");
+      if(i<FLATTENED_SIZE*3-1) file.print(", ");
+      if((i+1)%20==0) { file.println(); file.flush(); } [cite: 163]
+      if((i+1)%500==0) Serial.printf("  %d/%d\n", i+1, FLATTENED_SIZE*3);
+    }
+    file.println(" };"); [cite: 164]
+  }
+  file.println();
+  file.flush();
+  
+  // Dense bias [cite: 165]
+  if(USE_INT8_QUANTIZATION) {
+    float mx=0;
+    for(int i=0; i<3; i++) if(abs(dense_b[i])>mx) mx=abs(dense_b[i]); [cite: 166]
+    float sc = 127.0/max(mx, 0.001f);
+    file.print("const float myOutput_b_scale = "); file.print(sc,6); file.println("f;");
+    file.print("const int8_t myOutput_b[] = { "); [cite: 167]
+    for(int i=0; i<3; i++) {
+      file.print((int8_t)round(dense_b[i]*sc));
+      if(i<2) file.print(", ");
+    }
+    file.println(" };");
+  } else {
+    file.print("const float myOutput_b[] = { "); [cite: 168]
+    for(int i=0; i<3; i++) {
+      file.print(dense_b[i],6); file.print("f");
+      if(i<2) file.print(", "); [cite: 169]
+    }
+    file.println(" };");
+  }
+  file.println();
+  file.println("#endif");
+  file.close(); [cite: 170]
+  Serial.println("Model saved to /header/myModel.h");
+  return true;
+}
+
+// SETUP
+void setup() {
+  Serial.begin(115200);
+  pinMode(A0, INPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  delay(2000);
+  
+  Serial.println("\n\nesp32-train ready");
+  Serial.println("================");
+  if(!SD.begin(21)) { [cite: 171]
+    Serial.println("[ERR] SD init failed");
+    while(1) { delay(1000); } [cite: 172]
+  }
+  Serial.println("SD card OK");
+  
+  load_images_from_sd(); [cite: 173]
+  if(training_data.size() < 3) {
+    Serial.println("[ERR] Need at least 3 images in /images/");
+    while(1) { delay(1000); } [cite: 174]
+  }
+  
+  if(!allocate_model_memory()) {
+    Serial.println("[ERR] Memory allocation failed"); [cite: 175]
+    while(1) { delay(1000); }
+  }
+  
+  Serial.println("\n=== CONFIGURATION ==="); [cite: 176]
+  Serial.printf("Mode: %s\n", USE_GRAYSCALE_MODE ? "GRAYSCALE" : "RGB");
+  Serial.printf("Quantization: %s\n", USE_INT8_QUANTIZATION ? "INT8" : "FLOAT32");
+  Serial.printf("Learning Rate: %.4f\n", LEARNING_RATE); [cite: 177]
+  Serial.printf("Dropout: %.2f\n", DROPOUT_RATE);
+  Serial.printf("Batch Size: %d\n", BATCH_SIZE);
+  Serial.printf("Epochs: %d\n", TARGET_EPOCHS);
+  Serial.printf("Augmentation: %s\n", USE_AUGMENTATION ? "ON" : "OFF"); [cite: 178]
+  Serial.printf("Training Images: %d [%d, %d, %d]\n", 
+    training_data.size(), class_counts[0], class_counts[1], class_counts[2]); [cite: 179]
+  Serial.printf("Classes: [%s, %s, %s]\n", 
+    class_labels[0].c_str(), class_labels[1].c_str(), class_labels[2].c_str());
+  Serial.println("====================\n");
+  Serial.println("Press A0 to start training..."); [cite: 180]
+}
+
+// LOOP
+void loop() {
+  if(analogRead(A0) > 2000) {
+    digitalWrite(LED_BUILTIN, LOW);
+    Serial.println("\nA0 triggered - starting training...\n");
+    
+    initialize_weights(); [cite: 181]
+    train_model();
+    print_debug();
+    
+    if(save_model_header()) { [cite: 182]
+      Serial.println("\n✓ Training complete and model saved!");
+    } else {
+      Serial.println("\n✗ Training complete but save failed!"); [cite: 183]
+    }
+    
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(2000);
+    Serial.println("\nReady for next training (press A0)...\n"); [cite: 184]
+  }
+  delay(100);
 }
