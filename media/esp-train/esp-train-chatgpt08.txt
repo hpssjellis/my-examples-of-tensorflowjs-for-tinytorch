@@ -336,8 +336,7 @@ void myExportHeader() {
     myFile.print(myOutput_b[i], 6);
     if (i < 2) myFile.print(",");
   }
-  myFile.println("};
-");
+myFile.println("};\n");
 
   myFile.println("#endif");
   myFile.close();
