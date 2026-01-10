@@ -2,6 +2,13 @@ Started Jan 10, 2026
 
 This folder has the best so far programs for on device [XIAO ML kit](https://www.seeedstudio.com/The-XIAOML-Kit.html) training.
 
+
+sd card structure
+/images/<label_name>/*.jpg      (For this code needs three folders with the label names sorted by name)
+/header/myModel.h
+/header/myWeights.bin
+
+
 presently we have three propgrams:
 
 ## First ino file esp23s3-image-capture.ino  On trigger (squeeze A0) captures images every 100 ms
