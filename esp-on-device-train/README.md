@@ -11,18 +11,18 @@ sd card structure
 
 presently we have three propgrams:
 
-## First ino file a01-esp23s3-image-capture.ino  On trigger (squeeze A0) captures images every 100 ms
+## a01-esp23s3-image-capture.ino  On trigger (squeeze A0) captures images every 100 ms
 
 1. Manually you move images to an image folder with three folders for a different training class
 2. Folder names are the class names.
 
-## Second ino file  a02-esp32s3-train.ino
+## a02-esp32s3-train.ino
 
 1. loads images, checks header folder for a myWeights.bin file
 2. on A0 trigger trains one batch, prints debug and saves the myModel.h file and a binary weight.bin file to disk in the headers folder.
 3. Note the binary file is just an easier, cleaner way to do load the weights.
 
-## third program  a03-esp32s3-inference.ino
+## a03-esp32s3-inference.ino
 
 1. runs inference, this is the code you would mess with for your project
 2. Must manually move the myModel.h include file to this code. (Must know how to make a new tab in the Arduino IDE)
