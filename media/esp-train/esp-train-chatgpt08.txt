@@ -296,40 +296,35 @@ void myExportHeader() {
     myFile.print(myConv1_w[i], 6);
     if (i < 107) myFile.print(",");
   }
-  myFile.println("};
-");
+myFile.println("};\n");
 
   myFile.print("const float myConv1_b[4] = {");
   for (int i = 0; i < 4; i++) {
     myFile.print(myConv1_b[i], 6);
     if (i < 3) myFile.print(",");
   }
-  myFile.println("};
-");
+myFile.println("};\n");
 
   myFile.print("const float myConv2_w[288] = {");
   for (int i = 0; i < 288; i++) {
     myFile.print(myConv2_w[i], 6);
     if (i < 287) myFile.print(",");
   }
-  myFile.println("};
-");
+myFile.println("};\n");;
 
   myFile.print("const float myConv2_b[8] = {");
   for (int i = 0; i < 8; i++) {
     myFile.print(myConv2_b[i], 6);
     if (i < 7) myFile.print(",");
   }
-  myFile.println("};
-");
+myFile.println("};\n");
 
   myFile.print("const float myOutput_w[20184] = {");
   for (int i = 0; i < 20184; i++) {
     myFile.print(myOutput_w[i], 6);
     if (i < 20183) myFile.print(",");
   }
-  myFile.println("};
-");
+myFile.println("};\n");
 
   myFile.print("const float myOutput_b[3] = {");
   for (int i = 0; i < 3; i++) {
