@@ -93,6 +93,9 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 | [**torchjs24.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs24.html) | Performance Lab | Benchmarking Latency and FPS in real-time. | [**19.1** Benchmarking](https://mlsysbook.ai/tinytorch/modules/19_benchmarking_ABOUT.html) |
 | [**torchjs25.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs25.html) | The Memory Guard | Debugging GPU leaks with `.dispose()` logic. | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
  [**torchjs00.html**](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs00.html) | Finale JS to XIAOML Kit | Putting Vision all together for the [XIAO ML Kit (esp32S3)](https://www.seeedstudio.com/The-XIAOML-Kit.html). (DRAFT note larger numbers are the most recent models) | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
+ [**Best esp-on-device-train**](https://github.com/hpssjellis/my-examples-of-tensorflowjs-for-tinytorch/tree/main/esp-on-device-train) | Got full on-device training working using 3 programs: record images, train, inference | Putting Vision all together on the [XIAO ML Kit (esp32S3)](https://www.seeedstudio.com/The-XIAOML-Kit.html).  | [**1.1** Memory Management](https://mlsysbook.ai/tinytorch/modules/01_tensor_ABOUT.html) |
+
+
 
 
 
