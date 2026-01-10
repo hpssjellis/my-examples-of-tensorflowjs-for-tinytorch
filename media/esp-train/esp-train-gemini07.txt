@@ -1,0 +1,49 @@
+void load_images_from_sd() {
+  Serial.println("\n=== Loading Images ===");
+  // Updated: Now opens the /images directory instead of root 
+  File root = SD.open("/images");
+  if(!root) { Serial.println("[ERR] SD /images folder not found"); return; }
+  
+  int cls = 0;
+  File folder = root.openNextFile();
+  while(folder && cls < 3) {
+    if(folder.isDirectory()) {
+      String name = String(folder.name());
+      if(name.startsWith(".") || name=="header") {
+        folder = root.openNextFile();
+        continue;
+      }
+      
+      class_labels[cls] = name;
+      Serial.printf("\nClass %d: %s\n", cls, name.c_str());
+      File img = folder.openNextFile();
+      int loaded = 0;
+      
+      while(img && loaded < MAX_IMAGES_PER_CLASS) {
+        if(!img.isDirectory()) {
+          String fn = String(img.name());
+          if(fn.endsWith(".jpg") || fn.endsWith(".JPG")) {
+            // Updated: Path now includes the /images/ prefix 
+            String path = "/images/" + name + "/" + fn;
+            float* ib = (float*)ps_malloc(64*64*INPUT_CHANNELS*sizeof(float));
+            if(ib && load_image_from_file(path.c_str(), ib)) {
+              TrainingImage ti;
+              ti.data = ib;
+              ti.label = cls;
+              training_data.push_back(ti);
+              loaded++;
+              class_counts[cls]++;
+            } else {
+              if(ib) free(ib);
+            }
+          }
+        }
+        img = folder.openNextFile();
+      }
+      Serial.printf("  Loaded: %d\n", loaded);
+      cls++;
+    }
+    folder = root.openNextFile();
+  }
+  Serial.printf("\nTotal: %d [%d,%d,%d]\n", training_data.size(), class_counts[0], class_counts[1], class_counts[2]);
+}
