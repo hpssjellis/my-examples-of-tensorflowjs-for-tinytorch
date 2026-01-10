@@ -1,3 +1,5 @@
+Started Jan 10, 2026
+
 I am going to get some help from the different LLM's each working on it's own version of a on device xiaoML kit weights trainer.
 
 The folder on the sd card will be
@@ -12,4 +14,7 @@ The folder on the sd card will be
 ---/class2/img1...
 
 the image numbering is not important.
+
+Note thesee are saved as .txt files to make saving and viewing easier than .ino files.
+
 
