@@ -1,0 +1,262 @@
+// esp32-train.ino
+// ------------------------------------------------------------
+// ESP32-S3 on-device TRAINING sketch
+// FLOAT32 training, RGB input, serial-only diagnostics
+// Target: Seeed XIAO ESP32S3 Sense (XIAOML Kit)
+//
+// PURPOSE:
+//  - Load images from SD (batch at a time)
+//  - Train a small 2-layer CNN in FLOAT32
+//  - Trigger training via A0
+//  - Print per-batch loss + confidence to Serial
+//  - Save generated model header to /models/
+//
+// NOTE:
+//  - This sketch is for TRAINING ONLY
+//  - Speed is NOT important
+//  - Determinism and debuggability ARE important
+// ------------------------------------------------------------
+
+#include <Arduino.h>
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include "esp_heap_caps.h"
+
+// =========================
+// CONFIGURATION
+// =========================
+#define MY_IMAGE_W        64
+#define MY_IMAGE_H        64
+#define MY_INPUT_CHANNELS 3   // RGB only for training
+#define MY_NUM_CLASSES   3
+
+#define MY_BATCH_SIZE     2   // deliberately small
+#define MY_LEARNING_RATE  0.001f
+
+#define MY_TRAIN_TRIGGER_PIN A0
+
+#define MY_MODEL_FOLDER   "/models"
+#define MY_MODEL_FILENAME "/models/myModel_trained.h"
+
+// =========================
+// PSRAM HELPERS
+// =========================
+#define MY_PSRAM_ALLOC(sz) heap_caps_malloc((sz), MALLOC_CAP_SPIRAM)
+#define MY_PSRAM_FREE(p)   do { if(p){ heap_caps_free(p); p=nullptr; } } while(0)
+
+// =========================
+// DATA STRUCTURES
+// =========================
+// Single training sample (one image + label)
+struct myImageSample {
+  float   *myData;   // [H * W * C]
+  uint8_t  myLabel;  // class index
+};
+
+// =========================
+// MODEL PARAMETERS (FLOAT32)
+// =========================
+// Conv1: 4 filters, 3x3, RGB
+float myConv1_w[108];   // 4 * 3 * 3 * 3
+float myConv1_b[4];
+
+// Conv2: 8 filters, 3x3
+float myConv2_w[288];   // 8 * 4 * 3 * 3
+float myConv2_b[8];
+
+// Output dense
+float myOutput_w[20184]; // 6728 * 3
+float myOutput_b[3];
+
+// =========================
+// FORWARD BUFFERS (PSRAM)
+// =========================
+float *myConv1_out;   // 64*64*4
+float *myPool1_out;   // 32*32*4
+float *myConv2_out;   // 30*30*8
+float *myFlat_out;    // 6728
+float  mySoftmax[MY_NUM_CLASSES];
+
+// =========================
+// TRAINING STATE
+// =========================
+bool     myTrainingRequested = false;
+uint32_t myBatchCounter = 0;
+
+// =========================
+// UTILITY FUNCTIONS
+// =========================
+inline float myLeakyRelu(float x) {
+  return (x > 0.0f) ? x : 0.1f * x;
+}
+
+void mySoftmaxFn(float *myIn, float *myOut) {
+  float myMax = myIn[0];
+  for (int i = 1; i < MY_NUM_CLASSES; i++)
+    if (myIn[i] > myMax) myMax = myIn[i];
+
+  float mySum = 0.0f;
+  for (int i = 0; i < MY_NUM_CLASSES; i++) {
+    myOut[i] = expf(myIn[i] - myMax);
+    mySum += myOut[i];
+  }
+  for (int i = 0; i < MY_NUM_CLASSES; i++)
+    myOut[i] /= mySum;
+}
+
+// =========================
+// FILESYSTEM
+// =========================
+bool myInitSD() {
+  if (!SD.begin()) {
+    Serial.println("[ERR] SD init failed");
+    return false;
+  }
+  if (!SD.exists(MY_MODEL_FOLDER)) {
+    SD.mkdir(MY_MODEL_FOLDER);
+  }
+  return true;
+}
+
+// =========================
+// MODEL INITIALIZATION
+// =========================
+void myInitWeights() {
+  // Biases start at zero
+  memset(myConv1_b, 0, sizeof(myConv1_b));
+  memset(myConv2_b, 0, sizeof(myConv2_b));
+  memset(myOutput_b, 0, sizeof(myOutput_b));
+
+  // Small random weights
+  for (int i = 0; i < 108; i++)  myConv1_w[i] = random(-100, 100) / 500.0f;
+  for (int i = 0; i < 288; i++)  myConv2_w[i] = random(-100, 100) / 500.0f;
+  for (int i = 0; i < 20184; i++) myOutput_w[i] = random(-100, 100) / 500.0f;
+}
+
+void myAllocateBuffers() {
+  myConv1_out = (float*)MY_PSRAM_ALLOC(MY_IMAGE_W * MY_IMAGE_H * 4 * sizeof(float));
+  myPool1_out = (float*)MY_PSRAM_ALLOC((MY_IMAGE_W/2) * (MY_IMAGE_H/2) * 4 * sizeof(float));
+  myConv2_out = (float*)MY_PSRAM_ALLOC(30 * 30 * 8 * sizeof(float));
+  myFlat_out  = (float*)MY_PSRAM_ALLOC(6728 * sizeof(float));
+}
+
+// =========================
+// TRAIN ONE SAMPLE
+// =========================
+float myTrainSample(myImageSample &mySample) {
+  // --------------------------------------------------
+  // NOTE:
+  // This is a MINIMAL forward + loss computation.
+  // Backprop hooks go here later.
+  // --------------------------------------------------
+
+  // Fake logits for structural testing
+  float myLogits[MY_NUM_CLASSES] = {0.0f, 0.0f, 0.0f};
+
+  // Softmax
+  mySoftmaxFn(myLogits, mySoftmax);
+
+  // Cross-entropy loss
+  float myLoss = -logf(mySoftmax[mySample.myLabel] + 1e-6f);
+
+  // Confidence debug
+  float myConf = 0.0f;
+  for (int i = 0; i < MY_NUM_CLASSES; i++)
+    if (mySoftmax[i] > myConf) myConf = mySoftmax[i];
+
+  Serial.print("  Conf: "); Serial.print(myConf, 4);
+  Serial.print("  Loss: "); Serial.println(myLoss, 6);
+
+  return myLoss;
+}
+
+// =========================
+// TRAIN ONE BATCH
+// =========================
+void myTrainBatch() {
+  myBatchCounter++;
+  Serial.print("[Batch "); Serial.print(myBatchCounter); Serial.println("]");
+
+  float myLossSum = 0.0f;
+
+  for (int i = 0; i < MY_BATCH_SIZE; i++) {
+    myImageSample mySample;
+    mySample.myData  = nullptr;   // image loader will fill this later
+    mySample.myLabel = i % MY_NUM_CLASSES;
+
+    myLossSum += myTrainSample(mySample);
+  }
+
+  Serial.print("Avg Loss: ");
+  Serial.println(myLossSum / MY_BATCH_SIZE, 6);
+}
+
+// =========================
+// EXPORT HEADER
+// =========================
+void myExportHeader() {
+  File myFile = SD.open(MY_MODEL_FILENAME, FILE_WRITE);
+  if (!myFile) {
+    Serial.println("[ERR] Failed to open model file");
+    return;
+  }
+
+  myFile.println("#ifndef MY_MODEL_H");
+  myFile.println("#define MY_MODEL_H\n");
+
+  myFile.println("const float myConv1_w[108] = { /* ... */ };\n");
+  myFile.println("const float myConv1_b[4]   = { /* ... */ };\n");
+  myFile.println("const float myConv2_w[288] = { /* ... */ };\n");
+  myFile.println("const float myConv2_b[8]   = { /* ... */ };\n");
+  myFile.println("const float myOutput_w[20184] = { /* ... */ };\n");
+  myFile.println("const float myOutput_b[3]     = { /* ... */ };\n");
+
+  myFile.println("#endif");
+  myFile.close();
+
+  Serial.println("[OK] Model header written to SD");
+}
+
+// =========================
+// SETUP / LOOP
+// =========================
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  pinMode(MY_TRAIN_TRIGGER_PIN, INPUT_PULLUP);
+
+  if (!psramFound()) {
+    Serial.println("[FATAL] PSRAM not found");
+    while (1);
+  }
+
+  myInitSD();
+  myAllocateBuffers();
+  myInitWeights();
+
+  Serial.println("esp32-train ready");
+}
+
+void loop() {
+  if (digitalRead(MY_TRAIN_TRIGGER_PIN) == LOW) {
+    delay(50);
+    if (!myTrainingRequested) {
+      myTrainingRequested = true;
+      Serial.println("[TRAINING START]");
+    }
+  }
+
+  if (myTrainingRequested) {
+    myTrainBatch();
+
+    if (myBatchCounter >= 10) {
+      myExportHeader();
+      myTrainingRequested = false;
+      myBatchCounter = 0;
+      Serial.println("[TRAINING COMPLETE]");
+    }
+    delay(10);
+  }
+}
