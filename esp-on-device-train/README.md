@@ -21,8 +21,8 @@ This folder has the best so far of the programs for on device [XIAO ML kit](http
 
 /header/myWeights.bin            (Generated or reloaded by program 2)
 
-Just make the images and header folders the code will generate the header files. I have included a header folder in this github so you can see the format.
-Reminder you have to move the images from program 1 into the correct class named folders in the images folder.
+Just make the "images" and "header" folders on the micro sd card using your computer. The code in program 2 will generate the header files. I have included a header folder in this github so you can see the file formats.
+Reminder you have to move the images from program 1 into the correct class named folders in the "images" folder.
 
 ### Detaied steps
 
