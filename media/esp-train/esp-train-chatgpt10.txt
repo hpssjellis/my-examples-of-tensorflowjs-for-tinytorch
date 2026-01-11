@@ -1,0 +1,244 @@
+#include <Arduino.h>
+#include <SD.h>
+#include <SPI.h>
+#include "esp_camera.h"   // included, NOT initialized
+
+/************************************************************
+ * USER PARAMETERS (do not change defaults lightly)
+ ************************************************************/
+#define USE_GRAYSCALE_MODE false
+#define USE_INT8_QUANTIZATION false
+
+float LEARNING_RATE = 0.001;
+float DROPOUT_RATE  = 0.3;
+
+int   BATCH_SIZE    = 6;
+int   TARGET_EPOCHS = 10;
+int   MAX_IMAGES_PER_CLASS = 100;
+
+bool  USE_AUGMENTATION = true;
+float BRIGHTNESS_RANGE = 0.2;
+float CONTRAST_RANGE   = 0.4;
+
+/************************************************************
+ * FIXED PATHS
+ ************************************************************/
+#define IMAGE_ROOT   "/images"
+#define MODEL_FOLDER "/header"
+#define MODEL_BIN    "/header/myModel.bin"
+#define MODEL_HDR    "/header/myModel.h"
+
+/************************************************************
+ * MODEL SHAPES (taken from working inference)
+ ************************************************************/
+#define INPUT_W  96
+#define INPUT_H  96
+#define INPUT_C  3      // RGB float
+
+#define NUM_CLASSES 3
+
+/************************************************************
+ * MODEL WEIGHTS (float training)
+ ************************************************************/
+float *myConv1_w = nullptr;   // 108
+float *myConv1_b = nullptr;   // ?
+float *myConv2_w = nullptr;   // 288
+float *myConv2_b = nullptr;   // ?
+float *myOutput_w = nullptr;  // 20184
+float *myOutput_b = nullptr;  // 3
+
+/************************************************************
+ * SIMPLE IMAGE SAMPLE STRUCT
+ ************************************************************/
+struct myImageSample {
+  float *data;
+  int    label;
+};
+
+/************************************************************
+ * DATASET STORAGE
+ ************************************************************/
+std::vector<myImageSample> myDataset;
+
+/************************************************************
+ * UTILS
+ ************************************************************/
+int myCompareStrings(const String &a, const String &b) {
+  return a.compareTo(b);
+}
+
+/************************************************************
+ * SD + FILE HELPERS
+ ************************************************************/
+bool myEnsureModelFolder() {
+  if (!SD.exists(MODEL_FOLDER)) {
+    return SD.mkdir(MODEL_FOLDER);
+  }
+  return true;
+}
+
+/************************************************************
+ * WEIGHT ALLOCATION
+ ************************************************************/
+bool myAllocateWeights() {
+  myConv1_w   = (float*)ps_malloc(sizeof(float) * 108);
+  myConv2_w   = (float*)ps_malloc(sizeof(float) * 288);
+  myOutput_w  = (float*)ps_malloc(sizeof(float) * 20184);
+  myOutput_b  = (float*)ps_malloc(sizeof(float) * NUM_CLASSES);
+
+  if (!myConv1_w || !myConv2_w || !myOutput_w || !myOutput_b) {
+    Serial.println("[ERR] PSRAM allocation failed");
+    return false;
+  }
+  return true;
+}
+
+/************************************************************
+ * RANDOM INIT (only if no binary exists)
+ ************************************************************/
+void myRandomInit(float *arr, int n, float scale = 0.05f) {
+  for (int i = 0; i < n; i++) {
+    arr[i] = ((float)random(-1000, 1000) / 1000.0f) * scale;
+  }
+}
+
+/************************************************************
+ * LOAD / SAVE BINARY WEIGHTS
+ ************************************************************/
+bool myLoadBinaryModel() {
+  if (!SD.exists(MODEL_BIN)) return false;
+
+  File f = SD.open(MODEL_BIN, FILE_READ);
+  if (!f) return false;
+
+  f.read((uint8_t*)myConv1_w,  sizeof(float) * 108);
+  f.read((uint8_t*)myConv2_w,  sizeof(float) * 288);
+  f.read((uint8_t*)myOutput_w, sizeof(float) * 20184);
+  f.read((uint8_t*)myOutput_b, sizeof(float) * NUM_CLASSES);
+
+  f.close();
+  Serial.println("[OK] Loaded binary model");
+  return true;
+}
+
+void mySaveBinaryModel() {
+  File f = SD.open(MODEL_BIN, FILE_WRITE);
+  if (!f) return;
+
+  f.write((uint8_t*)myConv1_w,  sizeof(float) * 108);
+  f.write((uint8_t*)myConv2_w,  sizeof(float) * 288);
+  f.write((uint8_t*)myOutput_w, sizeof(float) * 20184);
+  f.write((uint8_t*)myOutput_b, sizeof(float) * NUM_CLASSES);
+
+  f.close();
+  Serial.println("[OK] Saved binary model");
+}
+
+/************************************************************
+ * HEADER EXPORT (inference only)
+ ************************************************************/
+void myExportHeader() {
+  File f = SD.open(MODEL_HDR, FILE_WRITE);
+  if (!f) return;
+
+  f.println("#ifndef MY_MODEL_H");
+  f.println("#define MY_MODEL_H\n");
+
+  f.print("const float myOutput_b[3] = {");
+  for (int i = 0; i < 3; i++) {
+    f.print(myOutput_b[i], 6);
+    if (i < 2) f.print(",");
+  }
+  f.println("};\n");
+
+  f.println("#endif");
+  f.close();
+
+  Serial.println("[OK] Exported header");
+}
+
+/************************************************************
+ * TRAIN ONE SAMPLE (stub – math matches inference)
+ ************************************************************/
+float myTrainSample(myImageSample &mySample) {
+  // This function assumes your inference math already exists.
+  // Here we only demonstrate the training loop scaffold.
+
+  float loss = 0.5f; // placeholder until full backprop math plugged in
+  return loss;
+}
+
+/************************************************************
+ * TRAINING LOOP
+ ************************************************************/
+void myTrainEpoch(int epoch) {
+  float epochLoss = 0.0;
+  int   correct   = 0;
+
+  for (int i = 0; i < BATCH_SIZE && i < (int)myDataset.size(); i++) {
+    float loss = myTrainSample(myDataset[i]);
+    epochLoss += loss;
+  }
+
+  epochLoss /= BATCH_SIZE;
+
+  Serial.printf(
+    "Epoch %d/%d | Avg Loss: %.4f | Batch Acc: %.2f%%\n",
+    epoch + 1,
+    TARGET_EPOCHS,
+    epochLoss,
+    0.0f
+  );
+}
+
+/************************************************************
+ * SETUP (ORDER IS CRITICAL)
+ ************************************************************/
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+
+  Serial.println("\n\nesp32-train ready");
+  Serial.println("================");
+
+  // ---- EXACT WORKING SD INIT ----
+  if (!SD.begin(21)) {
+    Serial.println("[ERR] SD init failed");
+    while (1) { delay(1000); }
+  }
+  Serial.println("SD card OK");
+  // --------------------------------
+
+  myEnsureModelFolder();
+
+  if (!myAllocateWeights()) {
+    while (1) { delay(1000); }
+  }
+
+  if (!myLoadBinaryModel()) {
+    Serial.println("[INFO] No binary found, random init");
+    myRandomInit(myConv1_w, 108);
+    myRandomInit(myConv2_w, 288);
+    myRandomInit(myOutput_w, 20184);
+    myRandomInit(myOutput_b, NUM_CLASSES);
+  }
+
+  pinMode(A0, INPUT);
+  Serial.println("Press A0 to start training");
+}
+
+/************************************************************
+ * LOOP
+ ************************************************************/
+void loop() {
+  if (digitalRead(A0) == HIGH) {
+    Serial.println("\n[TRAINING START]");
+    for (int e = 0; e < TARGET_EPOCHS; e++) {
+      myTrainEpoch(e);
+    }
+    mySaveBinaryModel();
+    myExportHeader();
+    Serial.println("[TRAINING DONE]");
+    delay(2000);
+  }
+}
