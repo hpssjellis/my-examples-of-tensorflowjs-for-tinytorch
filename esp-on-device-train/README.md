@@ -13,13 +13,16 @@ This folder has the best so far of the programs for on device [XIAO ML kit](http
 
 ### micro sd card structure:
 
-/images/<label_name>/*.jpg      (For this code, it needs three folders with the label names as the folder names)
+/images/CLASS0/.jpg      (For this code, it needs three folders with the label names as the folder names)
+/images/CLASS0/.jpg  
+/images/CLASS0/.jpg      
 
 /header/myModel.h                (Generated or reloaded by program 2)
 
 /header/myWeights.bin            (Generated or reloaded by program 2)
 
-Just make the header folder the code will generate the filles. I have included a header folder in this github so you can see the format.
+Just make the images and header folders the code will generate the header files. I have included a header folder in this github so you can see the format.
+Reminder you have to move the images from program 1 into the correct class named folders in the images folder.
 
 ### Detaied steps
 
