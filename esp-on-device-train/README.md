@@ -31,7 +31,7 @@ Reminder you have to move the images from program 1 into the correct class named
 1. On trigger (squeeze A0) captures images every 100 ms
 2. Manually you move these images into an "images" folder with three folders for each of the different training class
 3. Folder names are the class names.
-4. Only load 30 images per class. At the moment i am not sure why there is this limit, the PSRAM has much more space available.
+4. Only load 30 images per class. At the moment I am not sure why there is this limit, the PSRAM has much more space available.
 
 ## a02-esp32s3-train.ino
 
