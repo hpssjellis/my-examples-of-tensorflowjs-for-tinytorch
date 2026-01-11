@@ -1,6 +1,3 @@
-
-
-
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
 
 <body style="font-family: sans-serif; background-color: #fdfdfd; padding: 10px;">
@@ -173,6 +170,109 @@
         const myTime = new Date().toLocaleTimeString();
         myDiv.innerHTML = `[${myTime}] ${myMsg}<br>` + myDiv.innerHTML;
     }
+
+// Helper to process and reorder weights for C/ESP32 compatibility
+async function myProcessLayerWeights(myLayerName, myVarName, myShape, myIsConv) {
+    const myLayer = myModel.getLayer(myLayerName);
+    const myW = await myLayer.getWeights()[0].data();
+    const myB = await myLayer.getWeights()[1].data();
+    let myFlatW = new Float32Array(myW.length);
+
+    if (myIsConv) {
+        // TFJS [H, W, In, Out] -> C [Out, In, H, W]
+        let [kH, kW, inC, outC] = myShape;
+        let myIdx = 0;
+        for (let o = 0; o < outC; o++) {
+            for (let i = 0; i < inC; i++) {
+                for (let y = 0; y < kH; y++) {
+                    for (let x = 0; x < kW; x++) {
+                        myFlatW[myIdx++] = myW[y * kW * inC * outC + x * inC * outC + i * outC + o];
+                    }
+                }
+            }
+        }
+    } else {
+        // Dense: TFJS [In, Out] -> C [Out, In]
+        let [inS, outS] = myShape;
+        let myIdx = 0;
+        for (let o = 0; o < outS; o++) {
+            for (let i = 0; i < inS; i++) {
+                myFlatW[myIdx++] = myW[i * outS + o];
+            }
+        }
+    }
+    return { weights: myFlatW, bias: myB, name: myVarName };
+}
+
+// Function to export all training images individually into folders
+async function myExportAllImages() {
+    myLog("Starting Image Export...");
+    for (let i = 0; i < 3; i++) {
+        const myLabel = document.getElementById('myLabel' + i).value.replace(/\s+/g, '_');
+        const myImages = myTrainData[i];
+        myLog(`Downloading ${myImages.length} images for ${myLabel}...`);
+        
+        for (let j = 0; j < myImages.length; j++) {
+            const myTensor = myImages[j];
+            // Convert tensor (0.0-1.0) back to 0-255 canvas for blob generation
+            const myCanvas = document.createElement('canvas');
+            myCanvas.width = 64; myCanvas.height = 64;
+            const mySqueezed = myTensor.squeeze().mul(255);
+            await tf.browser.toPixels(mySqueezed.cast('int32'), myCanvas);
+            
+            const myBlob = await new Promise(resolve => myCanvas.toBlob(resolve, 'image/jpeg', 0.95));
+            const myFileName = `${myLabel}/img_${j}.jpg`;
+            myDownloadFile(myFileName, myBlob);
+            
+            mySqueezed.dispose();
+            if (j % 10 === 0) await tf.nextFrame(); // Prevent browser UI lockup
+        }
+    }
+    myLog("Image Export Finished.");
+}
+
+// Universal download helper
+function myDownloadFile(myFileName, myContent, myType = "application/octet-stream") {
+    const myLink = document.createElement("a");
+    const myBlob = myContent instanceof Blob ? myContent : new Blob([myContent], { type: myType });
+    myLink.href = URL.createObjectURL(myBlob);
+    myLink.download = myFileName;
+    myLink.click();
+    setTimeout(() => URL.revokeObjectURL(myLink.href), 1000);
+}
+
+async function myExportHeader() {
+    if (!myModel) { myLog("Error: No model to export!"); return; }
+    myLog("Exporting model for ESP32...");
+    
+    const inC = myIsGrayscaleMode ? 1 : 3;
+    const layers = [
+        await myProcessLayerWeights('myConv1', 'myConv1', [3, 3, inC, 4], true),
+        await myProcessLayerWeights('myConv2', 'myConv2', [3, 3, 4, 8], true),
+        await myProcessLayerWeights('myOutput', 'myOutput', [6728, 3], false)
+    ];
+
+    // 1. Generate Binary File
+    let totalSize = 0;
+    layers.forEach(l => totalSize += l.weights.length + l.bias.length);
+    const binData = new Float32Array(totalSize);
+    let offset = 0;
+    layers.forEach(l => {
+        binData.set(l.weights, offset); offset += l.weights.length;
+        binData.set(l.bias, offset); offset += l.bias.length;
+    });
+    myDownloadFile("myWeights.bin", binData.buffer);
+
+    // 2. Generate Header File
+    let h = `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n// Model optimized for ESP32\n`;
+    h += `const int myInC = ${inC};\n`;
+    h += `const char* myLabels[] = {"${document.getElementById('myLabel0').value}", "${document.getElementById('myLabel1').value}", "${document.getElementById('myLabel2').value}"};\n\n#endif`;
+    myDownloadFile("myModel.h", h, "text/plain");
+    
+    myLog("Export Complete! Put files in /header/ on SD card.");
+}
+
+
 
     function myUpdateMaxBuffer() {
       myMaxBuffer = parseInt(document.getElementById('myMaxBufferInput').value) || 100;
@@ -843,78 +943,6 @@
 
 
 
-// Helper to process and reorder weights for C/ESP32 compatibility
-async function myProcessLayerWeights(myLayerName, myVarName, myShape, myIsConv) {
-    const myLayer = myModel.getLayer(myLayerName);
-    const myW = await myLayer.getWeights()[0].data();
-    const myB = await myLayer.getWeights()[1].data();
-    let myFlatW = new Float32Array(myW.length);
-
-    if (myIsConv) {
-        // TFJS [H, W, In, Out] -> C [Out, In, H, W]
-        let [kH, kW, inC, outC] = myShape;
-        let myIdx = 0;
-        for (let o = 0; o < outC; o++) {
-            for (let i = 0; i < inC; i++) {
-                for (let y = 0; y < kH; y++) {
-                    for (let x = 0; x < kW; x++) {
-                        myFlatW[myIdx++] = myW[y * kW * inC * outC + x * inC * outC + i * outC + o];
-                    }
-                }
-            }
-        }
-    } else {
-        // Dense: TFJS [In, Out] -> C [Out, In]
-        let [inS, outS] = myShape;
-        let myIdx = 0;
-        for (let o = 0; o < outS; o++) {
-            for (let i = 0; i < inS; i++) {
-                myFlatW[myIdx++] = myW[i * outS + o];
-            }
-        }
-    }
-    return { weights: myFlatW, bias: myB, name: myVarName };
-}
-
-// Function to export all training images individually into folders
-async function myExportAllImages() {
-    myLog("Starting Image Export...");
-    for (let i = 0; i < 3; i++) {
-        const myLabel = document.getElementById('myLabel' + i).value.replace(/\s+/g, '_');
-        const myImages = myTrainData[i];
-        myLog(`Downloading ${myImages.length} images for ${myLabel}...`);
-        
-        for (let j = 0; j < myImages.length; j++) {
-            const myTensor = myImages[j];
-            // Convert tensor (0.0-1.0) back to 0-255 canvas for blob generation
-            const myCanvas = document.createElement('canvas');
-            myCanvas.width = 64; myCanvas.height = 64;
-            const mySqueezed = myTensor.squeeze().mul(255);
-            await tf.browser.toPixels(mySqueezed.cast('int32'), myCanvas);
-            
-            const myBlob = await new Promise(resolve => myCanvas.toBlob(resolve, 'image/jpeg', 0.95));
-            const myFileName = `${myLabel}/img_${j}.jpg`;
-            myDownloadFile(myFileName, myBlob);
-            
-            mySqueezed.dispose();
-            if (j % 10 === 0) await tf.nextFrame(); // Prevent browser UI lockup
-        }
-    }
-    myLog("Image Export Finished.");
-}
-
-// Universal download helper
-function myDownloadFile(myFileName, myContent, myType = "application/octet-stream") {
-    const myLink = document.createElement("a");
-    const myBlob = myContent instanceof Blob ? myContent : new Blob([myContent], { type: myType });
-    myLink.href = URL.createObjectURL(myBlob);
-    myLink.download = myFileName;
-    myLink.click();
-    setTimeout(() => URL.revokeObjectURL(myLink.href), 1000);
-}
-
-
-
 
   </script>
 </div>
@@ -963,6 +991,8 @@ function myTextGrow(myT, myC) {
 
 
 </script>
+
+
 
 
 
