@@ -13,9 +13,9 @@ This folder has the best so far of the programs for on device [XIAO ML kit](http
 
 ### micro sd card structure:
 
-/images/CLASS0/.jpg      (For this code, it needs three folders with the label names as the folder names)
-/images/CLASS0/.jpg  
-/images/CLASS0/.jpg      
+/images/CLASS0_NAME/.jpg      (For this code, it needs three folders with the label names as the folder names)
+/images/CLASS1_NAME/.jpg  
+/images/CLASS2_NAME/.jpg      
 
 /header/myModel.h                (Generated or reloaded by program 2)
 
