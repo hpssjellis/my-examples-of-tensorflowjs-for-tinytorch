@@ -7,7 +7,7 @@ This folder has the best so far of the programs for on device [XIAO ML kit](http
 
 ### Overview
 
-1. Program 1 takes pictures,  try 30 distinct images for each class Just hold A0 to trigger the image taking
+1. Program 1 takes pictures,  try 30 distinct images for each class. Just hold A0 to trigger the image taking
 2. Program 2 trains the 2 convolution layer vision model, exports a header file (and a binary copy) To train just hold A0
 3. Program 3 does inference  Does bare metal inference without using TFLITE. For debug just hold A0 
 
