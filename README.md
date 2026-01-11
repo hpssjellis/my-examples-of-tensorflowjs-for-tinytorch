@@ -106,12 +106,27 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 ### Presently working on: and not fully tested.
 
+[torchjs73.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs73.html) 
+
 [torchjs74.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs74.html) 
 
 [torchjs75.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs75.html) 
-[torchjs-gpt75.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs-gpt75.html) 
 
-It's a process
+[torchjs-gpt75.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs-gpt75.html)
+
+
+
+It's a process!
+
+<h2>By Jeremy Ellis, Use at your own Risk</h2>
+<a href="https://github.com/hpssjellis">github Profile hpssjellis</a><br>
+<a href="https://www.linkedin.com/in/jeremy-ellis-4237a9bb/">LinkedIn jeremy-ellis-4237a9bb</a> <br>
+<a href="https://opencollective.com/mlsysbook">Support the opencollective.com/mlsysbook</a> <br>
+<a href="https://github.com/hpssjellis/my-examples-of-tensorflowjs-for-tinytorch">This Github is at:my-examples-of-tensorflowjs-for-tinytorch </a> <br>
+<a href="https://www.seeedstudio.com/The-XIAOML-Kit.html">The $22 USD xiaoMLkit ($38 USD if you need a usbC cable and a micro SD Card)</a> <br>
+
+
+
 
 
 
