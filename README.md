@@ -114,6 +114,8 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 [torchjs-gpt75.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs-gpt75.html)
 
+[torchjs-gemini75.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs-gemini75.html)
+
 
 
 It's a process!
