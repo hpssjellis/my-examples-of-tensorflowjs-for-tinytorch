@@ -36,26 +36,26 @@ Reminder you have to move the images from program 1 into the correct class named
 ## a02-esp32s3-train.ino
 
 1. loads images, checks header folder for a myWeights.bin file, else random sets weights.
-2. on A0 trigger trains one batch, prints debug and saves the myModel.h file and a binary myWeights.bin file to disk in the "header" folder.
-3. Note the binary file is just an easier, cleaner way for the mcu to load the weights for another round of training
+2. on A0 trigger trains one full training cycle of epochs and batches, prints debug info and saves the myModel.h file and a binary myWeights.bin file to disk in the "header" folder.
+3. Note the binary file is just an easier, cleaner way for the MCU to load the weights for another round of training
 
 ## a03-esp32s3-inference.ino
 
 1. runs inference, this is the code you would mess with for your project
-2. Must manually move the myModel.h include file to this code. (Must know how to make a new tab in the Arduino IDE)
+2. You must manually move the myModel.h include file to this code. (Must know how to make a new tab in the Arduino IDE)
 3. A0 trigger prints debug info
 
 
 Still to do: is to make things easier to train using the webpage [torchjs00.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs00.html)
 
-Note: myModel.h and myWeights.bin are the same fill in different formats. They do not work together. myModel.h is human readable to help spot issues. 
-myWeights.bin is cleaner and easier for the micrcontroller to load at the start of a training session. The inference program uses myModel.h
+Note: myModel.h and myWeights.bin are the same file in different formats. They do not work together. myModel.h is human readable to help spot issues and the standard way to load data into an arduino program.   
+myWeights.bin is cleaner and easier for the micrcontroller to load at the start of a training session. 
 
 
 
 ## Student Learning
 
-This code is not to make the best Vision model it is to help students understand why they use edgeImpulse and TFLITE, while giving them full local control of the entire pipleine.
+This code is not to make the best vision model possible, it is to help students understand what is happening and why they should use edgeImpulse and TFLITE, while giving them full local control of the entire pipleine.
 
 
 
