@@ -11,7 +11,7 @@ This folder has the best so far of the programs for on device [XIAO ML kit](http
 2. Program 2 trains the 2 convolution layer vision model, exports a header file (and a binary copy) To train just hold A0
 3. Program 3 does  bare metal inference no TFLITE needed. For debug information just hold A0 
 
-micro sd card structure:
+### micro sd card structure:
 
 /images/<label_name>/*.jpg      (For this code, it needs three folders with the label names as the folder names)
 
