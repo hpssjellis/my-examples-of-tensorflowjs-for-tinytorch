@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+<style>
+body { font-family: sans-serif; background: #fdfdfd; padding: 10px; }
+.container { display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; }
+.panel { flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px; }
+</style>
+</head>
+<body>
+
+<h2 align="center">CNN Training - Web to ESP32</h2>
+
+<div class="container">
+  <div class="panel">
+    <h3>1. Camera & Training</h3>
+    <label><input type="checkbox" id="grayscaleToggle"> Grayscale Mode</label>
+    <br><br>
+    <video id="video" width="240" height="240" autoplay style="border: 2px solid black;"></video>
+    <br><br>
+    <button onclick="startCamera()" style="width:100%; padding:10px;">Start Camera & Model</button>
+    <hr>
+    <div style="display:flex; gap:10px;">
+      <div style="flex:1; text-align:center;">
+        <button onclick="collect(0)" style="width:90%;">Train Class 0</button>
+        <br><input type="text" id="label0" value="Class 0" style="width:90%; margin-top:5px;">
+        <br><span id="count0">0 samples</span>
+      </div>
+      <div style="flex:1; text-align:center;">
+        <button onclick="collect(1)" style="width:90%;">Train Class 1</button>
+        <br><input type="text" id="label1" value="Class 1" style="width:90%; margin-top:5px;">
+        <br><span id="count1">0 samples</span>
+      </div>
+      <div style="flex:1; text-align:center;">
+        <button onclick="collect(2)" style="width:90%;">Train Class 2</button>
+        <br><input type="text" id="label2" value="Class 2" style="width:90%; margin-top:5px;">
+        <br><span id="count2">0 samples</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="border-color: green;">
+    <h3>2. Training Progress</h3>
+    <div>Batches: <span id="batchCount">0</span></div>
+    <div>Loss: <span id="lossDisplay">--</span></div>
+    <div>Status: <span id="statusDisplay">Waiting...</span></div>
+    <hr>
+    <label>Epochs: <input type="number" id="epochs" value="10" min="1" style="width:60px;"></label><br>
+    <label>Batch Size: <input type="number" id="batchSize" value="6" min="3" step="3" style="width:60px;"></label><br>
+    <label>Learning Rate: <input type="number" id="lr" value="0.001" step="0.0001" style="width:80px;"></label>
+    <hr>
+    <h3>Export Model</h3>
+    <label><input type="checkbox" id="int8Toggle"> Int8 Quantization</label>
+    <br><br>
+    <button onclick="exportBinary()" style="width:100%; padding:10px; background:#2196F3; color:white;">
+      Download Binary (.bin)
+    </button>
+    <br><br>
+    <button onclick="exportHeader()" style="width:100%; padding:10px; background:#4CAF50; color:white;">
+      Download Header (.h)
+    </button>
+  </div>
+
+  <div class="panel">
+    <h3>3. Live Prediction</h3>
+    <div id="output" style="padding:10px; border:1px solid green; min-height:100px;">
+      Ready...
+    </div>
+  </div>
+</div>
+
+<script>
+let model, timer;
+let trainData = {0:[], 1:[], 2:[]};
+let isGrayscale = false;
+let batchCount = 0;
+
+async function startCamera() {
+  const video = document.getElementById('video');
+  isGrayscale = document.getElementById('grayscaleToggle').checked;
+  
+  video.srcObject = await navigator.mediaDevices.getUserMedia({
+    video: { width: 240, height: 240 }
+  });
+  
+  // Build model
+  const inputChannels = isGrayscale ? 1 : 3;
+  const lr = parseFloat(document.getElementById('lr').value);
+  
+  model = tf.sequential();
+  model.add(tf.layers.conv2d({
+    inputShape: [64, 64, inputChannels],
+    kernelSize: 3,
+    filters: 4,
+    activation: null,
+    biasInitializer: 'zeros'
+  }));
+  model.add(tf.layers.leakyReLU({alpha: 0.1}));
+  model.add(tf.layers.maxPooling2d({poolSize: 2, strides: 2}));
+  
+  model.add(tf.layers.conv2d({
+    kernelSize: 3,
+    filters: 8,
+    activation: null,
+    biasInitializer: 'zeros'
+  }));
+  model.add(tf.layers.leakyReLU({alpha: 0.1}));
+  model.add(tf.layers.flatten());
+  model.add(tf.layers.dropout({rate: 0.3}));
+  model.add(tf.layers.dense({
+    units: 3,
+    activation: 'softmax',
+    kernelInitializer: 'heNormal',
+    biasInitializer: 'zeros'
+  }));
+  
+  model.compile({
+    optimizer: tf.train.adam(lr),
+    loss: 'categoricalCrossentropy',
+    metrics: ['accuracy']
+  });
+  
+  console.log('Model created:', model.layers.map(l => l.name));
+  
+  // Start training loop
+  startTraining();
+}
+
+function collect(classId) {
+  const video = document.getElementById('video');
+  let frame = tf.browser.fromPixels(video).resizeBilinear([64,64]);
+  
+  if (isGrayscale) {
+    const oldFrame = frame;
+    frame = tf.tidy(() => {
+      const r = oldFrame.slice([0,0,0], [64,64,1]);
+      const g = oldFrame.slice([0,0,1], [64,64,1]);
+      const b = oldFrame.slice([0,0,2], [64,64,1]);
+      return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+    });
+    oldFrame.dispose();
+  }
+  
+  const oldFrame2 = frame;
+  frame = frame.div(255.0).expandDims(0);
+  oldFrame2.dispose();
+  
+  trainData[classId].push(frame);
+  document.getElementById('count' + classId).innerText = trainData[classId].length + ' samples';
+}
+
+async function startTraining() {
+  const video = document.getElementById('video');
+  const targetEpochs = parseInt(document.getElementById('epochs').value);
+  const batchSize = parseInt(document.getElementById('batchSize').value);
+  
+  timer = setInterval(async () => {
+    const counts = [trainData[0].length, trainData[1].length, trainData[2].length];
+    const minCount = Math.min(...counts);
+    
+    if (minCount >= 10 && batchCount < targetEpochs * 10) {
+      // Train batch
+      let batch = [];
+      let labels = [];
+      
+      for (let cls = 0; cls < 3; cls++) {
+        for (let i = 0; i < batchSize/3; i++) {
+          const idx = Math.floor(Math.random() * trainData[cls].length);
+          batch.push(trainData[cls][idx]);
+          labels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
+        }
+      }
+      
+      const batchTensor = tf.concat(batch);
+      const labelsTensor = tf.tensor2d(labels);
+      
+      const result = await model.trainOnBatch(batchTensor, labelsTensor);
+      const loss = Array.isArray(result) ? result[0] : result;
+      
+      batchTensor.dispose();
+      labelsTensor.dispose();
+      
+      batchCount++;
+      document.getElementById('batchCount').innerText = batchCount;
+      document.getElementById('lossDisplay').innerText = loss.toFixed(4);
+      document.getElementById('statusDisplay').innerText = loss < 0.1 ? 'Well Trained' : 'Training...';
+    }
+    
+    // Predict
+    if (model && video.srcObject) {
+      let input = tf.browser.fromPixels(video).resizeBilinear([64,64]);
+      
+      if (isGrayscale) {
+        const oldInput = input;
+        input = tf.tidy(() => {
+          const r = oldInput.slice([0,0,0], [64,64,1]);
+          const g = oldInput.slice([0,0,1], [64,64,1]);
+          const b = oldInput.slice([0,0,2], [64,64,1]);
+          return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+        });
+        oldInput.dispose();
+      }
+      
+      const oldInput2 = input;
+      input = input.div(255.0).expandDims(0);
+      oldInput2.dispose();
+      
+      const pred = model.predict(input);
+      const probs = await pred.data();
+      const classId = probs[0] > probs[1] ? (probs[0] > probs[2] ? 0 : 2) : (probs[1] > probs[2] ? 1 : 2);
+      
+      const label = document.getElementById('label' + classId).value;
+      document.getElementById('output').innerHTML = 
+        `<b>${label}</b><br>` +
+        `Class 0: ${(probs[0]*100).toFixed(1)}%<br>` +
+        `Class 1: ${(probs[1]*100).toFixed(1)}%<br>` +
+        `Class 2: ${(probs[2]*100).toFixed(1)}%`;
+      
+      input.dispose();
+      pred.dispose();
+    }
+  }, 200);
+}
+
+// CRITICAL FIX: Export weights in EXACT order ESP32 expects
+async function exportBinary() {
+  if (!model) { alert('No model to export'); return; }
+  
+  console.log('=== BINARY EXPORT DEBUG ===');
+  console.log('Total layers:', model.layers.length);
+  model.layers.forEach((l, i) => {
+    console.log(`Layer ${i}: ${l.name}, weights:`, l.getWeights().length);
+  });
+  
+  // Get weights from SPECIFIC layer indices
+  const conv1Weights = model.layers[0].getWeights()[0];  // Conv1 kernel
+  const conv1Bias = model.layers[0].getWeights()[1];     // Conv1 bias
+  const conv2Weights = model.layers[3].getWeights()[0];  // Conv2 kernel (after LeakyReLU + MaxPool)
+  const conv2Bias = model.layers[3].getWeights()[1];     // Conv2 bias
+  const denseWeights = model.layers[7].getWeights()[0];  // Dense kernel (after flatten + dropout)
+  const denseBias = model.layers[7].getWeights()[1];     // Dense bias
+  
+  const c1w = await conv1Weights.data();
+  const c1b = await conv1Bias.data();
+  const c2w = await conv2Weights.data();
+  const c2b = await conv2Bias.data();
+  const dw = await denseWeights.data();
+  const db = await denseBias.data();
+  
+  console.log('Conv1_w size:', c1w.length, 'expected:', isGrayscale ? 36 : 108);
+  console.log('Conv1_b size:', c1b.length, 'expected: 4');
+  console.log('Conv2_w size:', c2w.length, 'expected: 288');
+  console.log('Conv2_b size:', c2b.length, 'expected: 8');
+  console.log('Dense_w size:', dw.length, 'expected: 20184');
+  console.log('Dense_b size:', db.length, 'expected: 3');
+  
+  // Create binary blob
+  const totalSize = c1w.length + c1b.length + c2w.length + c2b.length + dw.length + db.length;
+  const buffer = new Float32Array(totalSize);
+  
+  let offset = 0;
+  buffer.set(c1w, offset); offset += c1w.length;
+  buffer.set(c1b, offset); offset += c1b.length;
+  buffer.set(c2w, offset); offset += c2w.length;
+  buffer.set(c2b, offset); offset += c2b.length;
+  buffer.set(dw, offset); offset += dw.length;
+  buffer.set(db, offset);
+  
+  console.log('Total floats:', totalSize, 'bytes:', totalSize * 4);
+  
+  const blob = new Blob([buffer], {type: 'application/octet-stream'});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'myWeights.bin';
+  link.click();
+  
+  console.log('Binary export complete!');
+}
+
+<script>
+async function exportHeader() {
+  if (!model) { alert('No model to export'); return; }
+
+  const isInt8 = document.getElementById('int8Toggle').checked;
+  const label0 = document.getElementById('label0').value.substring(0, 20);
+  const label1 = document.getElementById('label1').value.substring(0, 20);
+  const label2 = document.getElementById('label2').value.substring(0, 20);
+
+  let text = `// Auto-generated – ESP32 compatible\n`;
+  text += `#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+
+  text += `#define MY_MODEL_USES_BINARY\n`;
+  text += `#define MY_MODEL_FLOAT32\n`;
+
+  if (isInt8) text += `#define USE_INT8_MODE\n`;
+  if (isGrayscale) text += `#define USE_GRAYSCALE_MODE\n`;
+
+  text += `\n// Model structure\n`;
+  text += `#define MY_INPUT_W 64\n`;
+  text += `#define MY_INPUT_H 64\n`;
+  text += `#define MY_INPUT_C ${isGrayscale ? 1 : 3}\n\n`;
+
+  text += `#define MY_CONV1_FILTERS 4\n`;
+  text += `#define MY_CONV2_FILTERS 8\n`;
+  text += `#define MY_OUTPUT_CLASSES 3\n\n`;
+
+  text += `// Weight counts (MUST match binary layout)\n`;
+  text += `#define MY_CONV1_W_COUNT ${isGrayscale ? 36 : 108}\n`;
+  text += `#define MY_CONV1_B_COUNT 4\n`;
+  text += `#define MY_CONV2_W_COUNT 288\n`;
+  text += `#define MY_CONV2_B_COUNT 8\n`;
+  text += `#define MY_OUTPUT_W_COUNT 20184\n`;
+  text += `#define MY_OUTPUT_B_COUNT 3\n\n`;
+
+  text += `// Class labels\n`;
+  text += `static const char* myClassLabels[3] = {\n`;
+  text += `  "${label0}",\n  "${label1}",\n  "${label2}"\n};\n\n`;
+
+  text += `#endif\n`;
+
+  const blob = new Blob([text], {type: 'text/plain'});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'myModel.h';
+  link.click();
+
+  console.log('ESP32-compatible header exported');
+}
+</script>
+
+
+</script>
+
+</body>
+</html>
