@@ -5,17 +5,20 @@ This folder has the best so far of the programs for on device [XIAO ML kit](http
 
 ## 3 programs to do it all
 
-program 1 takes pictures  try 30 distinct images for each class Just hold A0
-program 2 trains the 2 convolution layer vision model, exports a header file (and a binary copy) To train just hold A0
-program 3 does inference  Does bare metal inference without using TFLITE. For debug just hold A0 
+### Overview
+
+1. Program 1 takes pictures,  try 30 distinct images for each class Just hold A0 to trigger the image taking
+2. Program 2 trains the 2 convolution layer vision model, exports a header file (and a binary copy) To train just hold A0
+3. Program 3 does inference  Does bare metal inference without using TFLITE. For debug just hold A0 
 
 micro sd card structure:
 /images/<label_name>/*.jpg      (For this code, it needs three folders with the label names as the folder names)
 /header/myModel.h                (Generated or reloaded by program 2)
 /header/myWeights.bin            (Generated or reloaded by program 2)
 
+Just make the header folder the code will generate the filles. I have included a header folder in this github so you can see the format.
 
-
+### Detaied steps
 
 ## a01-esp23s3-image-capture.ino  
 
