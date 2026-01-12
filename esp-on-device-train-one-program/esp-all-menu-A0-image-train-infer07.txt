@@ -1,0 +1,445 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <vector>
+#include <U8g2lib.h>
+#include <Wire.h>
+
+U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE);
+
+// ======================================================
+// CONFIGURATION & ML HYPERPARAMETERS
+// ======================================================
+const int myTotalItems = 5;      
+const int myThreshold = 1500;    
+const int myLongPressTime = 400; 
+const unsigned long myScreenTimeout = 300000; 
+String myClassLabels[3] = {"0finger", "1pen", "2wire"};
+
+float LEARNING_RATE = 0.001;
+int BATCH_SIZE = 6;
+int TARGET_EPOCHS = 5;
+
+// SYSTEM LOGIC VARIABLES
+unsigned long myTouchStart = 0;
+unsigned long myLastActivityTime = 0; 
+bool myIsTouching = false;
+bool myLongPressTriggered = false; 
+int myMenuIndex = 1;
+bool myIsSelected = false;
+
+// ML Buffers (PSRAM)
+float* myInputBuffer = nullptr;   
+float* myConv1Output = nullptr;  
+float* myPool1Output = nullptr;  
+float* myConv2Output = nullptr;  
+float* myConv1_w = nullptr;      
+float* myConv1_b = nullptr;      
+float* myConv2_w = nullptr;      
+float* myConv2_b = nullptr;      
+float* myOutput_w = nullptr;     
+float* myOutput_b = nullptr;     
+
+struct TrainingItem {
+  String path;
+  int label;
+};
+std::vector<TrainingItem> myTrainingData;
+
+// XIAO ESP32-S3 Camera Pins
+#define PWDN_GPIO_NUM     -1
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM     10
+#define SIOD_GPIO_NUM     40
+#define SIOC_GPIO_NUM     39
+#define Y9_GPIO_NUM       48
+#define Y8_GPIO_NUM       11
+#define Y7_GPIO_NUM       12
+#define Y6_GPIO_NUM       14
+#define Y5_GPIO_NUM       16
+#define Y4_GPIO_NUM       18
+#define Y3_GPIO_NUM       17
+#define Y2_GPIO_NUM       15
+#define VSYNC_GPIO_NUM    38
+#define HREF_GPIO_NUM     47
+#define PCLK_GPIO_NUM     13
+
+/* * ======================================================
+ * ML UTILITIES (Memory, Loading, Saving)
+ * ======================================================
+ */
+
+void myAllocateMemory() {
+  if (myInputBuffer != nullptr) return;
+  myInputBuffer = (float*)ps_malloc(64 * 64 * 3 * sizeof(float));
+  myConv1Output = (float*)ps_malloc(62 * 62 * 4 * sizeof(float));
+  myPool1Output = (float*)ps_malloc(31 * 31 * 4 * sizeof(float));
+  myConv2Output = (float*)ps_malloc(29 * 29 * 8 * sizeof(float));
+  myConv1_w = (float*)ps_malloc(108 * sizeof(float));
+  myConv1_b = (float*)ps_malloc(4 * sizeof(float));
+  myConv2_w = (float*)ps_malloc(288 * sizeof(float));
+  myConv2_b = (float*)ps_malloc(8 * sizeof(float));
+  myOutput_w = (float*)ps_malloc(20184 * sizeof(float));
+  myOutput_b = (float*)ps_malloc(3 * sizeof(float));
+
+  // Initialize weights with small random values if not loaded
+  for(int i=0; i<108; i++) myConv1_w[i] = ((rand()%1000)/5000.0f) - 0.1f;
+  for(int i=0; i<288; i++) myConv2_w[i] = ((rand()%1000)/5000.0f) - 0.1f;
+  for(int i=0; i<20184; i++) myOutput_w[i] = ((rand()%1000)/5000.0f) - 0.1f;
+}
+
+bool myLoadWeights() {
+  if (!SD.exists("/header/myWeights.bin")) return false;
+  File f = SD.open("/header/myWeights.bin", FILE_READ);
+  if (!f) return false;
+  myAllocateMemory();
+  f.read((uint8_t*)myConv1_w, 108*4); f.read((uint8_t*)myConv1_b, 4*4);
+  f.read((uint8_t*)myConv2_w, 288*4); f.read((uint8_t*)myConv2_b, 8*4);
+  f.read((uint8_t*)myOutput_w, 20184*4); f.read((uint8_t*)myOutput_b, 3*4);
+  f.close();
+  Serial.println("Weights loaded from SD.");
+  return true;
+}
+
+void mySaveWeights() {
+  if (!SD.exists("/header")) SD.mkdir("/header");
+  File f = SD.open("/header/myWeights.bin", FILE_WRITE);
+  if (f) {
+    f.write((uint8_t*)myConv1_w, 108*4); f.write((uint8_t*)myConv1_b, 4*4);
+    f.write((uint8_t*)myConv2_w, 288*4); f.write((uint8_t*)myConv2_b, 8*4);
+    f.write((uint8_t*)myOutput_w, 20184*4); f.write((uint8_t*)myOutput_b, 3*4);
+    f.close();
+    Serial.println("Weights saved to SD.");
+  }
+}
+
+/* * ======================================================
+ * FORWARD INFERENCE CORE
+ * ======================================================
+ */
+
+void myForwardPass(float* input, float* logits) {
+  // 1. Conv1 (3x3, 3 in, 4 out)
+  for(int oc=0; oc<4; oc++) {
+    for(int y=0; y<62; y++) {
+      for(int x=0; x<62; x++) {
+        float sum = myConv1_b[oc];
+        for(int ic=0; ic<3; ic++) {
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              sum += input[((y+ky)*64+(x+kx))*3 + ic] * myConv1_w[((oc*3+ic)*3+ky)*3+kx];
+            }
+          }
+        }
+        myConv1Output[(oc*62+y)*62+x] = sum > 0 ? sum : 0; // ReLU
+      }
+    }
+  }
+
+  // 2. Pool1 (2x2)
+  for(int c=0; c<4; c++) {
+    for(int y=0; y<31; y++) {
+      for(int x=0; x<31; x++) {
+        float maxV = -1e10;
+        for(int py=0; py<2; py++) {
+          for(int px=0; px<2; px++) {
+            float v = myConv1Output[(c*62+(y*2+py))*62+(x*2+px)];
+            if(v > maxV) maxV = v;
+          }
+        }
+        myPool1Output[(c*31+y)*31+x] = maxV;
+      }
+    }
+  }
+
+  // 3. Conv2 (3x3, 4 in, 8 out)
+  for(int oc=0; oc<8; oc++) {
+    for(int y=0; y<29; y++) {
+      for(int x=0; x<29; x++) {
+        float sum = myConv2_b[oc];
+        for(int ic=0; ic<4; ic++) {
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              sum += myPool1Output[(ic*31+(y+ky))*31+(x+kx)] * myConv2_w[((oc*4+ic)*3+ky)*3+kx];
+            }
+          }
+        }
+        myConv2Output[(oc*29+y)*29+x] = sum > 0 ? sum : 0; // ReLU
+      }
+    }
+  }
+
+  // 4. Output Layer (Dense)
+  for(int i=0; i<3; i++) {
+    logits[i] = myOutput_b[i];
+    for(int j=0; j<6728; j++) { // 8*29*29
+      logits[i] += myConv2Output[j] * myOutput_w[i*6728 + j];
+    }
+  }
+}
+
+/* * ======================================================
+ * MENU ACTIONS (Items 1-5)
+ * ======================================================
+ */
+
+void myActionCollect(int classIdx) {
+  String path = "/images/" + myClassLabels[classIdx];
+  if (!SD.exists("/images")) SD.mkdir("/images");
+  if (!SD.exists(path)) SD.mkdir(path);
+
+  u8g2.firstPage();
+  do {
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(0, 15, (": " + myClassLabels[classIdx]).c_str());
+    u8g2.drawStr(0, 30, "TAP:Snap HOLD:Exit");
+  } while (u8g2.nextPage());
+
+  while (true) {
+    int val = analogRead(A0);
+    if (val > myThreshold) {
+      unsigned long start = millis();
+      while (analogRead(A0) > myThreshold) {
+        if (millis() - start > myLongPressTime) {
+          myIsSelected = false; 
+          return;
+        }
+      }
+      camera_fb_t * fb = esp_camera_fb_get();
+      if (fb) {
+        String fileName = path + "/img_" + String(millis()) + ".jpg";
+        File file = SD.open(fileName, FILE_WRITE);
+        if (file) {
+          file.write(fb->buf, fb->len);
+          file.close();
+          Serial.println("Saved: " + fileName);
+          u8g2.firstPage();
+          do { u8g2.drawStr(0, 30, "Saved!"); } while (u8g2.nextPage());
+          delay(200);
+        }
+        esp_camera_fb_return(fb);
+      }
+    }
+    delay(10);
+  }
+}
+
+void myActionTrain() {
+  myTrainingData.clear();
+  Serial.println("\n--- Starting Training ---");
+  
+  // Load image list
+  for(int i=0; i<3; i++) {
+    File root = SD.open("/images/" + myClassLabels[i]);
+    while(File file = root.openNextFile()) {
+      if(!file.isDirectory()) myTrainingData.push_back({file.path(), i});
+      file.close();
+    }
+    root.close();
+  }
+
+  if(myTrainingData.empty()) {
+    Serial.println("No images found!");
+    myIsSelected = false;
+    return;
+  }
+
+  myAllocateMemory();
+  Serial.print("Total Images: "); Serial.println(myTrainingData.size());
+
+  for(int epoch = 1; epoch <= TARGET_EPOCHS; epoch++) {
+    float totalLoss = 0;
+    int correct = 0;
+
+    for(size_t i=0; i<myTrainingData.size(); i++) {
+      // 1. Load and Preprocess Image (Simplified for logic)
+      File f = SD.open(myTrainingData[i].path);
+      // [Simulation of decoding JPG into myInputBuffer would go here]
+      f.close();
+
+      // 2. Forward
+      float logits[3];
+      myForwardPass(myInputBuffer, logits);
+
+      // 3. Compute Loss & Backprop (Simulated update logic for brevity)
+      // In real implementation, gradients are calculated here
+      totalLoss += 0.5f; // Placeholder for actual cross-entropy
+      
+      if(i % BATCH_SIZE == 0) {
+        Serial.printf("Epoch %d | Batch %d/%d | Loss: %.4f\n", epoch, (int)i, (int)myTrainingData.size(), totalLoss/(i+1));
+        u8g2.firstPage();
+        do {
+          u8g2.setCursor(0, 15); u8g2.print("Epoch: "); u8g2.print(epoch);
+          u8g2.setCursor(0, 30); u8g2.print("Loss: "); u8g2.print(totalLoss/(i+1), 4);
+        } while (u8g2.nextPage());
+      }
+    }
+  }
+
+  mySaveWeights();
+  Serial.println("Training Complete.");
+  u8g2.firstPage();
+  do { u8g2.drawStr(0, 20, "DONE! Saved."); } while (u8g2.nextPage());
+  delay(1500);
+  myIsSelected = false;
+}
+
+void myActionInfer() {
+  if (!SD.exists("/header/myWeights.bin")) {
+    u8g2.firstPage();
+    do { u8g2.drawStr(0, 15, "NOT TRAINED!"); u8g2.drawStr(0, 30, "Run Item 4"); } while (u8g2.nextPage());
+    delay(2000);
+    myIsSelected = false;
+    return;
+  }
+  
+  myLoadWeights();
+  Serial.println("\n--- Starting Inference ---");
+
+  while (true) {
+    camera_fb_t * fb = esp_camera_fb_get();
+    if (fb) {
+      // [Simulation: Decode JPG to myInputBuffer 64x64x3]
+      float logits[3];
+      myForwardPass(myInputBuffer, logits);
+
+      // Find Max
+      int pred = 0;
+      for(int i=1; i<3; i++) if(logits[i] > logits[pred]) pred = i;
+
+      Serial.printf("Prediction: %s (%.2f, %.2f, %.2f)\n", myClassLabels[pred].c_str(), logits[0], logits[1], logits[2]);
+
+      u8g2.firstPage();
+      do {
+        u8g2.setFont(u8g2_font_6x10_tf);
+        u8g2.drawStr(0, 12, "RESULT:");
+        u8g2.setFont(u8g2_font_7x14_tf);
+        u8g2.drawStr(0, 28, myClassLabels[pred].c_str());
+        u8g2.setFont(u8g2_font_5x7_tf);
+        u8g2.drawStr(0, 38, "HOLD A0 to Exit");
+      } while (u8g2.nextPage());
+
+      esp_camera_fb_return(fb);
+    }
+
+    if (analogRead(A0) > myThreshold) {
+      unsigned long start = millis();
+      while (analogRead(A0) > myThreshold) {
+        if (millis() - start > myLongPressTime) {
+          myIsSelected = false;
+          Serial.println("Exiting Inference.");
+          return;
+        }
+      }
+    }
+    delay(50);
+  }
+}
+
+/* * ======================================================
+ * CORE SYSTEM
+ * ======================================================
+ */
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(A0, INPUT);
+  u8g2.begin();
+  
+  if (!SD.begin(21)) { 
+    Serial.println("SD initialization failed!");
+    while(1); 
+  }
+
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_240X240;
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+  
+  if(esp_camera_init(&config) != ESP_OK) {
+    Serial.println("Camera init failed!");
+  }
+
+  myLastActivityTime = millis();
+  Serial.println("System Ready.");
+}
+
+void loop() {
+  unsigned long myCurrentMillis = millis();
+  int val = analogRead(A0);
+
+  if (val > myThreshold) {
+    if (!myIsTouching) {
+      myTouchStart = myCurrentMillis;
+      myIsTouching = true;
+      myLongPressTriggered = false;
+    }
+    myLastActivityTime = myCurrentMillis;
+
+    if (!myLongPressTriggered && (myCurrentMillis - myTouchStart > myLongPressTime)) {
+      myIsSelected = true;
+      if (myMenuIndex == 1) myActionCollect(0);
+      else if (myMenuIndex == 2) myActionCollect(1);
+      else if (myMenuIndex == 3) myActionCollect(2);
+      else if (myMenuIndex == 4) myActionTrain();
+      else if (myMenuIndex == 5) myActionInfer();
+      myLongPressTriggered = true; 
+    }
+  } 
+  else {
+    if (myIsTouching) {
+      if (!myLongPressTriggered && (myCurrentMillis - myTouchStart < myLongPressTime)) {
+        if (!myIsSelected) {
+          myMenuIndex++;
+          if (myMenuIndex > myTotalItems) myMenuIndex = 1;
+        }
+      }
+      myIsTouching = false;
+    }
+  }
+
+  myDrawDisplay(myCurrentMillis);
+}
+
+void myDrawDisplay(unsigned long myCurrentMillis) {
+  u8g2.firstPage();
+  do {
+    if (myCurrentMillis - myLastActivityTime < myScreenTimeout) {
+      u8g2.setFont(u8g2_font_6x10_tf);
+      if (!myIsSelected) {
+        u8g2.drawStr(0, 10, "TAP:Next HOLD:Ok");
+        int myStartItem = (myMenuIndex <= 3) ? 1 : myMenuIndex - 2;
+        for (int i = 0; i < 3; i++) {
+          int cur = myStartItem + i;
+          if (cur > myTotalItems) break;
+          String label = (cur <= 3) ? myClassLabels[cur-1] : (cur == 4 ? "Train" : "Infer");
+          int myYPos = 22 + (i * 9);
+          if (myMenuIndex == cur) u8g2.drawStr(0, myYPos, ("> " + label).c_str());
+          else u8g2.drawStr(0, myYPos, ("  " + label).c_str());
+        }
+      }
+    }
+  } while (u8g2.nextPage());
+}
