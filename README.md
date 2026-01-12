@@ -109,23 +109,19 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 
 ### Presently working on: and not fully tested.
 
-[torchjs73.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs73.html) 
 
-[torchjs74.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs74.html) 
-
-[torchjs75claude.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs75claude.html) 
 
 [torchjs75gpt.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs75gpt.html)
 
-[torchjs75gemini.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs75gemini.html)
 
-<hr>
+
 
 
 [torchjs76claude.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs76claude.html) 
 
 [torchjs77claude.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs77claude.html) 
 
+[torchjs77gemini.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs77gemini.html)
 
 
 It's a process!
