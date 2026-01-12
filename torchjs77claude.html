@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+</head>
+<body style="font-family: sans-serif; background-color: #fdfdfd; padding: 10px;">
+
+<h2 align="center">Rocksetta Pro: Fixed Export for ESP32</h2>
+
+<div id="myCodeSpace"> 
+  <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
+    
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <label style="font-weight: bold; color: darkblue; cursor: pointer; display: block; margin-bottom: 8px;">
+        <input type="checkbox" id="myGrayscaleToggle" onchange="myCheckGrayscaleChange()"> Use Grayscale Mode
+      </label>
+      <p style="font-size: 11px; margin-top: -5px; color: #666;">(Set BEFORE starting - 3x smaller model, needs MORE data & training)</p>
+      <select id="myCameraSelect" style="width: 100%; margin-bottom: 5px;"></select>
+      <div align="center">
+          <video id="myVideo1" width="240" height="240" autoplay playsinline style="border: 2px solid black; background: #000; border-radius: 5px;"></video>
+          <canvas id="myCanvas1" width="240" height="240" style="display:none; border: 2px solid black; border-radius: 5px;"></canvas>
+      </div>
+      <br>
+      <div style="display: flex; gap: 5px;">
+        <input type="button" id="myStartBtn" value="1. Start Camera & Brain" onclick="myStartAll()" style="flex: 1; font-weight:bold; padding:12px; background:#e1f5fe; border-radius: 5px; cursor:pointer;">
+        <input type="button" id="myStopCameraBtn" value="⏹ Stop Camera" onclick="myStopCamera()" style="flex: 1; font-weight:bold; padding:12px; background:#ffcdd2; border-radius: 5px; cursor:pointer; display:none;">
+      </div>
+      <hr>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+        <span><b>Max Buffer:</b></span>
+        <input type="number" id="myMaxBufferInput" value="100" min="10" max="500" style="width: 80px; padding: 2px;" title="Max samples stored per class" onchange="myUpdateMaxBuffer()">
+      </div>
+      <p style="font-size: 11px; margin-top: -5px; color: #666;">(Samples per class - higher = more memory)</p>
+      <hr>
+      <div style="display: flex; justify-content: space-between;">
+          <input type="button" value="Save TFJS" onclick="mySaveModel()" style="width:48%;">
+          <input type="button" value="Load TFJS" onclick="myLoadModel()" style="width:48%;">
+      </div>
+      <hr>
+      <b>Training:</b><br>
+      <div style="display: flex; justify-content: space-between; margin-top:5px; text-align:center;">
+        <div style="flex:1;">
+          <input type="button" value="Train 0" onclick="myCollect(0)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(0)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(0)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="button" value="Download" onclick="myDownloadImages(0)" style="width:90%; font-size:10px; padding:3px; background:#e3f2fd; margin-top:2px;">
+          <br><input type="text" id="myLabel0" value="Class 0" size="8" style="margin-top:3px;">
+          <br><span id="myCount0" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+        <div style="flex:1;">
+          <input type="button" value="Train 1" onclick="myCollect(1)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(1)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(1)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="button" value="Download" onclick="myDownloadImages(1)" style="width:90%; font-size:10px; padding:3px; background:#e3f2fd; margin-top:2px;">
+          <br><input type="text" id="myLabel1" value="Class 1" size="8" style="margin-top:3px;">
+          <br><span id="myCount1" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+        <div style="flex:1;">
+          <input type="button" value="Train 2" onclick="myCollect(2)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(2)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(2)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="button" value="Download" onclick="myDownloadImages(2)" style="width:90%; font-size:10px; padding:3px; background:#e3f2fd; margin-top:2px;">
+          <br><input type="text" id="myLabel2" value="Class 2" size="8" style="margin-top:3px;">
+          <br><span id="myCount2" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
+      <b>2. Training Progress</b><hr>
+      <div style="background: white; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span><b>Batches Trained:</b></span>
+          <span id="myEpochDisplay" style="font-weight: bold; color: #2196F3;">0</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Min Samples:</b></span>
+          <input type="number" id="myMinSamples" value="10" min="1" max="100" style="width: 80px; padding: 2px;" title="Minimum samples per class before training">
+        </div>
+        <div style="margin-bottom: 5px;">
+          <label style="cursor: pointer;">
+            <input type="checkbox" id="myUseAllData" checked onchange="myToggleEpochMode()"> Use All Data (systematic epochs)
+          </label>
+        </div>
+        <div id="myEpochControls" style="display: block;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+            <span><b>Target Epochs:</b></span>
+            <input type="number" id="myTargetEpochs" value="10" min="0" step="0.5" style="width: 80px; padding: 2px;" title="0 = Train Forever">
+          </div>
+          <p id="myEpochHint" style="font-size: 11px; margin: -3px 0 5px 0; color: #666;"></p>
+        </div>
+        <div id="myBatchControls" style="display: none;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+            <span><b>Max Batches:</b></span>
+            <input type="number" id="myMaxBatches" value="40" min="0" style="width: 80px; padding: 2px;" title="0 = Train Forever">
+          </div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Batch Size:</b></span>
+          <input type="number" id="myBatchSize" value="6" min="3" max="30" step="3" style="width: 80px; padding: 2px;" title="Total samples per batch (multiple of 3)">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Learning Rate:</b></span>
+          <input type="number" id="myLearningRate" value="0.001" min="0.0001" max="0.1" step="0.0001" style="width: 80px; padding: 2px;" title="How fast the model learns">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Dropout Rate:</b></span>
+          <input type="number" id="myDropoutRate" value="0.3" min="0.0" max="0.9" step="0.1" style="width: 80px; padding: 2px;" title="Dropout regularization (0=none, 0.5=aggressive)">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span><b>Avg Loss:</b></span>
+          <span id="myLossDisplay" style="font-weight: bold; color: #FF9800;">--</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span><b>Training Status:</b></span>
+          <span id="myStatusDisplay" style="font-weight: bold; color: #9E9E9E;">Waiting...</span>
+        </div>
+        <div style="margin-top: 10px; display: flex; gap: 5px;">
+          <input type="button" id="myPauseBtn" value="⏸ Pause Training" onclick="myPauseTraining()" style="flex: 1; padding: 8px; background: #FF9800; color: white; font-weight: bold; border-radius: 5px; cursor: pointer;" disabled>
+          <input type="button" id="myResumeBtn" value="▶ Resume Training" onclick="myResumeTraining()" style="flex: 1; padding: 8px; background: #4CAF50; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">
+        </div>
+        <div style="margin-top: 10px; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
+          <div id="myProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); transition: width 0.3s;"></div>
+        </div>
+      </div>
+      <hr>
+      <b>Edge AI Export (FIXED!)</b><br>
+      <label style="font-weight: bold; color: darkgreen; cursor: pointer;">
+        <input type="checkbox" id="myInt8Toggle"> Use Int8 Quantization
+      </label>
+      <p style="font-size: 11px;">(Saves memory on ESP32)</p>
+      <b>Export Name:</b><br>
+      <input type="text" id="myExportName" value="myModel" style="width:70%;"> .h
+      <br><br>
+      <input type="button" value="DOWNLOAD BINARY (.bin)" style="background-color:#2196F3; color:white; width:100%; padding:12px; font-weight:bold; border-radius: 5px; cursor:pointer; margin-bottom:10px;" onclick="myExportBinary()">
+      <input type="button" value="GENERATE HEADER (.h)" style="background-color:#4CAF50; color:white; width:100%; padding:15px; font-weight:bold; border-radius: 5px; cursor:pointer;" onclick="myExportHeader()">
+      <hr>
+      <input type="button" value="🔍 DEBUG Current Frame" style="background-color:#2196F3; color:white; width:100%; padding:12px; font-weight:bold; border-radius: 5px; cursor:pointer; margin-bottom:10px;" onclick="myDebugCurrentFrame()">
+      <hr>
+      <div style="margin-bottom: 10px; display: flex; gap: 5px;">
+        <input type="button" id="myStopAnalysisBtn" value="⏹ Stop Analysis" onclick="myStopAnalysis()" style="flex: 1; padding: 8px; background: #F44336; color: white; font-weight: bold; border-radius: 5px; cursor: pointer;" disabled>
+        <input type="button" id="myStartAnalysisBtn" value="▶ Start Analysis" onclick="myStartAnalysis()" style="flex: 1; padding: 8px; background: #2196F3; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">
+      </div>
+      <div id="myOutputDisplay" style="border: 1px solid green; padding: 10px; background: white; min-height: 50px;">Ready...</div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <b>3. Activity Logs</b><hr>
+      <div id="myDivHistory" style="border: 1px solid blue; padding: 8px; height: 300px; overflow-y: scroll; font-family: monospace; font-size: 0.85em; background: #f1f8ff; border-radius: 5px;">
+        Logs will appear here...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var myModel, myTimer, myLastID = -1;
+    var myTrainData = {0:[], 1:[], 2:[]};
+    var myMaxBuffer = 100;
+    var myEpochCount = 0;
+    var myLossHistory = [];
+    var myLossSum = 0;
+    var myLossCount = 0;
+    var myTrainingPaused = false;
+    var myAnalysisStopped = false;
+    var myIsGrayscaleMode = false;
+    var myGrayscaleRenderTimer = null;
+    var myAllDataIndex = 0;
+    var myCurrentEpoch = 0;
+    var myShuffledData = [];
+    var myCameraStopped = false;
+
+    function myLog(myMsg) {
+        const myDiv = document.getElementById('myDivHistory');
+        const myTime = new Date().toLocaleTimeString();
+        myDiv.innerHTML = `[${myTime}] ${myMsg}<br>` + myDiv.innerHTML;
+    }
+
+    function myUpdateMaxBuffer() {
+      myMaxBuffer = parseInt(document.getElementById('myMaxBufferInput').value) || 100;
+      myLog(`Max buffer updated to ${myMaxBuffer} samples per class`);
+    }
+
+    function myToggleEpochMode() {
+      const useAllData = document.getElementById('myUseAllData').checked;
+      document.getElementById('myEpochControls').style.display = useAllData ? 'block' : 'none';
+      document.getElementById('myBatchControls').style.display = useAllData ? 'none' : 'block';
+      myUpdateEpochHint();
+    }
+
+    function myUpdateEpochHint() {
+      if (!document.getElementById('myUseAllData').checked) return;
+      const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+      const totalSamples = counts[0] + counts[1] + counts[2];
+      const batchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
+      const batchesPerEpoch = Math.ceil(totalSamples / batchSize);
+      const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 10;
+      const totalBatches = Math.ceil(targetEpochs * batchesPerEpoch);
+      const hintElement = document.getElementById('myEpochHint');
+      if (hintElement) {
+        if (totalSamples > 0) {
+          hintElement.innerText = `(≈ ${batchesPerEpoch} batches/epoch = ${totalBatches} total batches)`;
+        } else {
+          hintElement.innerText = '(Waiting for training data...)';
+        }
+      }
+    }
+
+    function myAugment(tensor) {
+      return tf.tidy(() => {
+        let augmented = tensor;
+        if (Math.random() > 0.5) {
+          const brightness = (Math.random() - 0.5) * 0.2;
+          augmented = augmented.add(brightness).clipByValue(0, 1);
+        }
+        if (Math.random() > 0.5) {
+          const contrast = 0.8 + Math.random() * 0.4;
+          const mean = augmented.mean();
+          augmented = augmented.sub(mean).mul(contrast).add(mean).clipByValue(0, 1);
+        }
+        return augmented;
+      });
+    }
+
+    function myStopAnalysis() {
+      myAnalysisStopped = true;
+      document.getElementById('myStopAnalysisBtn').style.display = 'none';
+      document.getElementById('myStartAnalysisBtn').style.display = 'block';
+      document.getElementById('myOutputDisplay').innerHTML = '<span style="color:#666;">Analysis Stopped</span>';
+      myLog("Analysis Stopped");
+    }
+
+    function myStartAnalysis() {
+      myAnalysisStopped = false;
+      document.getElementById('myStopAnalysisBtn').style.display = 'block';
+      document.getElementById('myStartAnalysisBtn').style.display = 'none';
+      document.getElementById('myOutputDisplay').innerHTML = 'Analyzing...';
+      myLog("Analysis Started");
+    }
+
+    function myStopCamera() {
+      const myVideo = document.getElementById('myVideo1');
+      if (myVideo.srcObject) {
+        myVideo.srcObject.getTracks().forEach(track => track.stop());
+        myVideo.srcObject = null;
+      }
+      if (myGrayscaleRenderTimer) {
+        clearInterval(myGrayscaleRenderTimer);
+        myGrayscaleRenderTimer = null;
+      }
+      myCameraStopped = true;
+      document.getElementById('myStartBtn').style.display = 'block';
+      document.getElementById('myStopCameraBtn').style.display = 'none';
+      myLog("Camera Stopped - Training continues");
+    }
+
+    function myCheckGrayscaleChange() {
+      if (myModel) {
+        alert('⚠️ Changing color mode requires restarting.\n\nPlease refresh the page to switch modes.');
+        document.getElementById('myGrayscaleToggle').checked = myIsGrayscaleMode;
+      }
+    }
+
+    async function myStartAll() {
+      const myVideo = document.getElementById('myVideo1');
+      const myCanvas = document.getElementById('myCanvas1');
+      const myCtx = myCanvas.getContext('2d');
+      
+      if (!myVideo.srcObject) {
+        myCameraStopped = false;
+        const myDeviceId = document.getElementById('myCameraSelect').value;
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({
+          video: { width: 240, height: 240, deviceId: myDeviceId ? { exact: myDeviceId } : undefined }
+        });
+        myLog("Camera Started");
+        document.getElementById('myStartBtn').style.display = 'none';
+        document.getElementById('myStopCameraBtn').style.display = 'block';
+        
+        myIsGrayscaleMode = document.getElementById('myGrayscaleToggle').checked;
+        if (myIsGrayscaleMode) {
+          myVideo.style.display = 'none';
+          myCanvas.style.display = 'block';
+          if (myGrayscaleRenderTimer) clearInterval(myGrayscaleRenderTimer);
+          myGrayscaleRenderTimer = setInterval(() => {
+            myCtx.drawImage(myVideo, 0, 0, 240, 240);
+            const myImageData = myCtx.getImageData(0, 0, 240, 240);
+            const myData = myImageData.data;
+            for (let i = 0; i < myData.length; i += 4) {
+              const myGray = myData[i] * 0.299 + myData[i+1] * 0.587 + myData[i+2] * 0.114;
+              myData[i] = myGray; myData[i+1] = myGray; myData[i+2] = myGray;
+            }
+            myCtx.putImageData(myImageData, 0, 0);
+          }, 33);
+        } else {
+          myVideo.style.display = 'block';
+          myCanvas.style.display = 'none';
+        }
+      }
+      
+      if (!myModel) {
+        const inputChannels = myIsGrayscaleMode ? 1 : 3;
+        const myCurrentLearningRate = parseFloat(document.getElementById('myLearningRate').value) || 0.001;
+        const myCurrentDropoutRate = parseFloat(document.getElementById('myDropoutRate').value) || 0.3;
+        
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({
+          inputShape:[64,64,inputChannels], 
+          kernelSize:3, 
+          filters:4, 
+          activation: null,
+          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), 
+          biasInitializer: 'zeros'
+        }));
+        myModel.add(tf.layers.leakyReLU({alpha: 0.1}));
+        myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
+        
+        myModel.add(tf.layers.conv2d({
+          kernelSize:3, 
+          filters:8, 
+          activation: null,
+          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), 
+          biasInitializer: 'zeros'
+        }));
+        myModel.add(tf.layers.leakyReLU({alpha: 0.1}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dropout({rate: myCurrentDropoutRate}));
+        myModel.add(tf.layers.dense({
+          units:3, 
+          activation:'softmax', 
+          kernelInitializer: 'heNormal', 
+          biasInitializer: 'zeros'
+        }));
+        
+        myModel.compile({
+          optimizer: tf.train.adam(myCurrentLearningRate), 
+          loss:'categoricalCrossentropy', 
+          metrics: ['accuracy']
+        });
+        
+        myLog(`Model: ${myIsGrayscaleMode ? 'Grayscale' : 'RGB'}, Dropout: ${myCurrentDropoutRate}, LR: ${myCurrentLearningRate}`);
+        myLog(`Layer structure: ${myModel.layers.map(l => l.name).join(' → ')}`);
+      }
+      
+      if (myTimer) clearInterval(myTimer);
+      myTimer = setInterval(async () => {
+        let myInput = null;
+        if (!myCameraStopped && myVideo.srcObject) {
+          myInput = tf.browser.fromPixels(myVideo).resizeBilinear([64,64]);
+          if (myIsGrayscaleMode) {
+            const myOldInput = myInput;
+            myInput = tf.tidy(() => {
+              const r = myOldInput.slice([0, 0, 0], [64, 64, 1]);
+              const g = myOldInput.slice([0, 0, 1], [64, 64, 1]);
+              const b = myOldInput.slice([0, 0, 2], [64, 64, 1]);
+              return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+            });
+            myOldInput.dispose();
+          }
+          const myOldInput2 = myInput;
+          myInput = myInput.div(255.0).expandDims(0);
+          myOldInput2.dispose();
+        }
+        
+        // Training logic
+        const minSamples = parseInt(document.getElementById('myMinSamples').value) || 10;
+        const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+        const minCount = Math.min(...counts);
+        let myBatchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
+        if (myBatchSize < 3) myBatchSize = 3;
+        if (myBatchSize % 3 !== 0) myBatchSize = Math.ceil(myBatchSize / 3) * 3;
+        
+        const myUseAllData = document.getElementById('myUseAllData').checked;
+        let maxBatches = 0;
+        if (myUseAllData) {
+          const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
+          const totalSamples = counts[0] + counts[1] + counts[2];
+          const batchesPerEpoch = totalSamples > 0 ? Math.ceil(totalSamples / myBatchSize) : 1;
+          maxBatches = targetEpochs > 0 ? Math.ceil(targetEpochs * batchesPerEpoch) : 0;
+        } else {
+          maxBatches = parseInt(document.getElementById('myMaxBatches').value) || 0;
+        }
+        
+        const reachedLimit = maxBatches > 0 && myEpochCount >= maxBatches;
+        
+        if (minCount >= minSamples && !myTrainingPaused && !reachedLimit) {
+          let myBatch = []; let myLabels = [];
+          if (myUseAllData) {
+            if (myAllDataIndex === 0) {
+              myCurrentEpoch++; myShuffledData = [];
+              for (let cls = 0; cls < 3; cls++) {
+                for (let i = 0; i < myTrainData[cls].length; i++) {
+                  myShuffledData.push({sample: myTrainData[cls][i], label: cls});
+                }
+              }
+              for (let i = myShuffledData.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [myShuffledData[i], myShuffledData[j]] = [myShuffledData[j], myShuffledData[i]];
+              }
+              myLog(`Epoch ${myCurrentEpoch} (${myShuffledData.length} samples)`);
+            }
+            for (let i = 0; i < myBatchSize && myAllDataIndex < myShuffledData.length; i++) {
+              const item = myShuffledData[myAllDataIndex];
+              const augmented = (Math.random() > 0.5) ? myAugment(item.sample) : tf.clone(item.sample);
+              myBatch.push(augmented);
+              myLabels.push(item.label === 0 ? [1,0,0] : item.label === 1 ? [0,1,0] : [0,0,1]);
+              myAllDataIndex++;
+            }
+            if (myAllDataIndex >= myShuffledData.length) { myAllDataIndex = 0; }
+          } else {
+            const mySamplesPerClass = myBatchSize / 3;
+            for (let cls = 0; cls < 3; cls++) {
+              for (let i = 0; i < mySamplesPerClass; i++) {
+                const randomIdx = Math.floor(Math.random() * myTrainData[cls].length);
+                const sample = myTrainData[cls][randomIdx];
+                const augmented = (Math.random() > 0.5) ? myAugment(sample) : tf.clone(sample);
+                myBatch.push(augmented);
+                myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
+              }
+            }
+          }
+          
+          const myBatchTensor = tf.concat(myBatch);
+          const myLabelsTensor = tf.tensor2d(myLabels);
+          let currentLoss = 0;
+          try {
+            const trainResult = await myModel.trainOnBatch(myBatchTensor, myLabelsTensor);
+            currentLoss = Array.isArray(trainResult) ? trainResult[0] : trainResult;
+            if (isNaN(currentLoss) || !isFinite(currentLoss)) currentLoss = 0;
+          } catch (error) {
+            myLog("ERROR: " + error.message);
+            currentLoss = 0;
+          }
+          
+          myBatchTensor.dispose(); myLabelsTensor.dispose();
+          myBatch.forEach(t => {
+            let isStoredSample = false;
+            for (let cls = 0; cls < 3; cls++) {
+              if (myTrainData[cls].includes(t)) { isStoredSample = true; break; }
+            }
+            if (!isStoredSample) t.dispose();
+          });
+          
+          myEpochCount++;
+          if (currentLoss > 0) { myLossSum += currentLoss; myLossCount++; }
+          
+          if (myEpochCount % 10 === 0) {
+            const avgLoss = myLossCount > 0 ? myLossSum / myLossCount : 0;
+            if (avgLoss > 0 && isFinite(avgLoss)) { myLossHistory.push(avgLoss); }
+            if (myLossHistory.length > 20)
