@@ -1,5 +1,6 @@
 /*
- * Updated to capture at 96x96 for compatibility with ML training
+ * ESP32-S3 Data Collection - Complete Version
+ * Captures 96x96 images for SD storage and OLED preview.
  */
 
 #include "esp_camera.h"
@@ -9,9 +10,11 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
-// Initialize the OLED display
-U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, u8x8_pin_none); 
+// --- Configuration ---
+const int myCaptureSize = 96;
+const int myOledThreshold = 120; // Brightness for binary OLED view
 
+// Pin Definitions
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM     10
@@ -28,126 +31,113 @@ U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, u8x8_pin_none);
 #define VSYNC_GPIO_NUM    38
 #define HREF_GPIO_NUM     47
 #define PCLK_GPIO_NUM     13
+#define LED_BUILTIN       21
 
-unsigned long lastCaptureTime = 0; 
-int imageCount = 1;              
+U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, u8x8_pin_none); 
+
 bool camera_sign = false;          
 bool sd_sign = false;              
-int myOledCount = 0;
+int imageCount = 1;
 
-void photo_save(const char * fileName) {
-  camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) {
-    Serial.println("Failed to get camera frame buffer");
-    return;
-  }
-  
-  writeFile(SD, fileName, fb->buf, fb->len);
-  float fileSizeKB = fb->len / 1024.0;
-  Serial.printf("Saved %s (%.2f KB) at %dx%d\n", fileName, fileSizeKB, fb->width, fb->height);
-
-  int myImageWidth = fb->width;
-  int myImageHeight = fb->height;
-  size_t myRgbBufferSize = myImageWidth * myImageHeight * 3;
-  uint8_t *myRgbBuffer = (uint8_t *)ps_malloc(myRgbBufferSize);
-  
-  if (myRgbBuffer != NULL) {
-    if (fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer)) {
-      int myOledWidth = u8g2.getDisplayWidth();
-      int myOledHeight = u8g2.getDisplayHeight();
-      int myScaleX = myImageWidth / myOledWidth;
-      int myScaleY = myImageHeight / myOledHeight;
-
-      u8g2.firstPage();
-      do {
-        for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
-          for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
-            int myImageX = myOledX * myScaleX;
-            int myImageY = myOledY * myScaleY;
-            size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
-            if (myPixelIndex + 2 < myRgbBufferSize) {
-              uint8_t myBrightness = (myRgbBuffer[myPixelIndex] + myRgbBuffer[myPixelIndex + 1] + myRgbBuffer[myPixelIndex + 2]) / 3;
-              if (myBrightness > 120) u8g2.drawPixel(myOledX, myOledY);
-            }
-          }
+void myUpdateOled(const char* msg, int count = -1) {
+    u8g2.firstPage();
+    do {
+        u8g2.setFont(u8g2_font_ncenB08_tr);
+        u8g2.setCursor(0, 15);
+        u8g2.print(msg);
+        if (count != -1) {
+            u8g2.setCursor(0, 30);
+            u8g2.print("Count: "); u8g2.print(count);
         }
-        u8g2.setFont(u8g2_font_ncenB10_tr);
-        u8g2.setColorIndex(0);
-        u8g2.drawBox(0, 0, 20, 15);
-        u8g2.setColorIndex(1);
-        u8g2.setCursor(3, 10);
-        u8g2.print(String(myOledCount));
-      } while (u8g2.nextPage());
-    }
-    free(myRgbBuffer);
-  }
-  esp_camera_fb_return(fb);
+    } while (u8g2.nextPage());
 }
 
-void writeFile(fs::FS &fs, const char * path, uint8_t * data, size_t len){
-    File file = fs.open(path, FILE_WRITE);
-    if(!file) return;
-    file.write(data, len);
-    file.close();
+void mySavePhoto() {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) return;
+
+    char myPath[32];
+    sprintf(myPath, "/images/img_%d.jpg", imageCount);
+    
+    File myFile = SD.open(myPath, FILE_WRITE);
+    if (myFile) {
+        myFile.write(fb->buf, fb->len);
+        myFile.close();
+        Serial.printf("Saved: %s (%d bytes)\n", myPath, fb->len);
+        imageCount++;
+    }
+
+    // OLED Preview logic
+    uint8_t *myRgb = (uint8_t *)ps_malloc(fb->width * fb->height * 3);
+    if (myRgb && fmt2rgb888(fb->buf, fb->len, fb->format, myRgb)) {
+        int oW = u8g2.getDisplayWidth();
+        int oH = u8g2.getDisplayHeight();
+        u8g2.firstPage();
+        do {
+            for (int y = 0; y < oH; y++) {
+                for (int x = 0; x < oW; x++) {
+                    int ix = (x * fb->width) / oW;
+                    int iy = (y * fb->height) / oH;
+                    int idx = (iy * fb->width + ix) * 3;
+                    uint8_t lum = (myRgb[idx] + myRgb[idx+1] + myRgb[idx+2]) / 3;
+                    if (lum > myOledThreshold) u8g2.drawPixel(x, y);
+                }
+            }
+            u8g2.setFont(u8g2_font_04b_03_tr);
+            u8g2.setCursor(0, 8); u8g2.print("REC");
+        } while (u8g2.nextPage());
+    }
+    free(myRgb);
+    esp_camera_fb_return(fb);
 }
 
 void setup() {
-  Serial.begin(115200);
-  pinMode(A0, INPUT);    
-  pinMode(LED_BUILTIN, OUTPUT);
-  u8g2.begin();
-  
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  
-  // CHANGED: Using 96x96 directly
-  config.frame_size = FRAMESIZE_96X96; 
-  config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_LATEST;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 10;
-  config.fb_count = 2;
+    Serial.begin(115200);
+    pinMode(A0, INPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
+    u8g2.begin();
 
-  esp_err_t err = esp_camera_init(&config);
-  if (err == ESP_OK) camera_sign = true;
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = PWDN_GPIO_NUM;
+    config.pin_reset = RESET_GPIO_NUM;
+    config.xclk_freq_hz = 20000000;
+    config.frame_size = FRAMESIZE_96X96;
+    config.pixel_format = PIXFORMAT_JPEG;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    config.jpeg_quality = 10;
+    config.fb_count = 2;
 
-  if(SD.begin(21)) sd_sign = true;
+    if (esp_camera_init(&config) == ESP_OK) camera_sign = true;
+    if (SD.begin(21)) {
+        sd_sign = true;
+        SD.mkdir("/images");
+    }
 
-  u8g2.firstPage();
-  do {
-    u8g2.setFont(u8g2_font_ncenB10_tr);
-    u8g2.setCursor(3, 20);
-    u8g2.print("96x96 Ready");
-  } while (u8g2.nextPage());
+    if (camera_sign && sd_sign) myUpdateOled("System Ready");
+    else myUpdateOled("Error Init");
 }
 
 void loop() {
-  if(camera_sign && sd_sign && analogRead(A0) > 1000){
-    digitalWrite(LED_BUILTIN, LOW);
-    char filename[32];
-    sprintf(filename, "/image%d.jpg", imageCount);
-    photo_save(filename);
-    imageCount++;
-    myOledCount++;
-    delay(500);
-    digitalWrite(LED_BUILTIN, HIGH);
-  }
+    if (analogRead(A0) > 2000) { // Trigger on button/pin high
+        digitalWrite(LED_BUILTIN, LOW);
+        mySavePhoto();
+        delay(300);
+        digitalWrite(LED_BUILTIN, HIGH);
+    }
 }
