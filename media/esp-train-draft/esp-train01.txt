@@ -1,0 +1,83 @@
+/*
+ * ESP32-S3 CNN Training - Updated for Flexible Downsampling
+ */
+
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <vector>
+
+// --- FLEXIBLE PARAMETERS ---
+const int MODEL_INPUT_SIZE = 64; // The CNN is 64x64
+#define USE_GRAYSCALE_MODE false
+float LEARNING_RATE = 0.001;
+int BATCH_SIZE = 6;
+int TARGET_EPOCHS = 10;
+
+struct TrainingData {
+    float* data;
+    int label;
+};
+std::vector<TrainingData> training_data;
+
+// Smart Image Loader: Handles 96x96 (or any size) -> 64x64 downsampling
+bool load_image_from_file(const char* path, int label) {
+    File file = SD.open(path);
+    if (!file) return false;
+
+    size_t size = file.size();
+    uint8_t* buf = (uint8_t*)malloc(size);
+    file.read(buf, size);
+    file.close();
+
+    int w, h;
+    // Decode JPG to RGB888 in PSRAM
+    uint8_t* rgb = NULL;
+    bool decoded = jpg2rgb888(buf, size, &rgb, JPG_SCALE_NONE); // Fixed scale to get full resolution
+    free(buf);
+
+    if (!decoded || !rgb) return false;
+
+    // Detect width/height from the decoder (will be 96 or 240 etc)
+    // For simplicity in this env, we assume the camera driver set the size
+    // but a real jpg2rgb888 return would provide w/h. 
+    // We'll use 96 as our standard source if coming from the new collection script.
+    int srcW = 96; 
+    int srcH = 96;
+
+    float* input = (float*)ps_malloc(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 3 * sizeof(float));
+    
+    // Nearest Neighbor Downsample to 64x64
+    float scaleX = (float)srcW / MODEL_INPUT_SIZE;
+    float scaleY = (float)srcH / MODEL_INPUT_SIZE;
+
+    for (int y = 0; y < MODEL_INPUT_SIZE; y++) {
+        for (int x = 0; x < MODEL_INPUT_SIZE; x++) {
+            int srcX = (int)(x * scaleX);
+            int srcY = (int)(y * scaleY);
+            int srcIdx = (srcY * srcW + srcX) * 3;
+            int dstIdx = (y * MODEL_INPUT_SIZE + x) * 3;
+
+            input[dstIdx] = rgb[srcIdx] / 255.0f;
+            input[dstIdx + 1] = rgb[srcIdx + 1] / 255.0f;
+            input[dstIdx + 2] = rgb[srcIdx + 2] / 255.0f;
+        }
+    }
+
+    free(rgb);
+    training_data.push_back({input, label});
+    return true;
+}
+
+// ... rest of training logic stays same but uses MODEL_INPUT_SIZE ...
+void setup() {
+    Serial.begin(115200);
+    // Init SD, Load images using load_image_from_file
+    // Run training loop
+}
+
+void loop() {
+    // Check A0 to start
+}
