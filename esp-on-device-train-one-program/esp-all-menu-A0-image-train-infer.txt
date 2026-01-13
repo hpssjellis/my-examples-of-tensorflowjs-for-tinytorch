@@ -1,3 +1,22 @@
+// ======================================================
+// XIAO ML KIT (OR XIAO ESP32S3 SENSE)
+// FULL VISION ML 
+// Image collection, training, inference
+//
+// SD card stores: images in class folders
+// SD card stores: headers in bin and .h text char array format
+// Serial monitor and OLED output
+// By jeremy Ellis
+// Use at your own risk!
+// MIT license
+// Github Profile https://github.com/hpssjellis
+// LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
+//
+// If touch sensor at A0 is hard to activate try a small amount of hand cream rubbed into your hands well.
+// ======================================================
+
+
+
 #include "esp_camera.h"
 #include "img_converters.h"
 #include "FS.h"
@@ -36,11 +55,11 @@ const int myThresholdRelease = 900;   // Touch release threshold (hysteresis)
 const int myLongPressTime = 900;      // Increased from 450ms for clearer distinction
 const unsigned long myScreenTimeout = 300000; 
 
-String myClassLabels[3] = {"0finger", "1pen", "2wire"};
+String myClassLabels[3] = {"0Background", "1CellPhone", "2Face"};
 
-float LEARNING_RATE = 0.001;
-int BATCH_SIZE = 6;
-int TARGET_EPOCHS = 5;
+float LEARNING_RATE = 0.0003;
+int BATCH_SIZE = 12;
+int TARGET_EPOCHS = 10;
 
 // SYSTEM LOGIC VARIABLES
 unsigned long myTouchStart = 0;
@@ -607,6 +626,16 @@ void myActionCollect(int classIdx) {
 
 void myActionTrain() {
   Serial.println("\n>>> Starting training mode");
+
+  // Display training start message
+  u8g2.firstPage();
+  do {
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(0, 12, "TRAINING MODE");
+    u8g2.drawStr(0, 24, "Loading images...");
+    u8g2.drawStr(0, 36, "HOLD A0 to exit");
+  } while (u8g2.nextPage());
+  delay(1500);  // Show message for 1.5 seconds
   
   // Try to load existing weights first, otherwise init randomly
   if (myLoadWeights()) {
@@ -925,7 +954,7 @@ void loop() {
       }
       myIsTouching = false;
       myLongPressTriggered = false;
-      delay(50); 
+      delay(200); 
     }
   }
 
