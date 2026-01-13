@@ -640,6 +640,8 @@ void myActionCollect(int classIdx) {
   } while (u8g2.nextPage());
 
   while (true) {
+    bool shouldCapture = false;
+    
     // Check for serial input
     if (Serial.available()) {
       char c = Serial.read();
@@ -649,13 +651,12 @@ void myActionCollect(int classIdx) {
         delay(200);
         return;
       } else if (c == 't' || c == 'T') {
-        // Trigger capture
         Serial.println("Tap command received - capturing image");
-        goto capture_image;
+        shouldCapture = true;
       }
     }
     
-    if (myReadTouch() > myThresholdPress) {
+    if (!shouldCapture && myReadTouch() > myThresholdPress) {
       unsigned long start = millis();
       while (myReadTouch() > myThresholdPress) {
         if (millis() - start > myLongPressTime) {
@@ -664,9 +665,11 @@ void myActionCollect(int classIdx) {
           return;
         }
       }
-      
-     // capture_image:
-      // Short press or serial 't' - capture image
+      shouldCapture = true;
+    }
+    
+    // Capture image if triggered by either touch or serial
+    if (shouldCapture) {
       camera_fb_t * fb = esp_camera_fb_get();
       if (fb) {
         String fileName = path + "/img_" + String(millis()) + ".jpg";
