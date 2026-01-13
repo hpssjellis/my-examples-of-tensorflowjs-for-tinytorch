@@ -1,17 +1,18 @@
 // ======================================================
-// XIAO ML KIT (OR ESP32S3 SENSE)
+// XIAO ML KIT (OR XIAO ESP32S3 SENSE)
 // FULL VISION ML 
 // Image collection, training, inference
+//
 // SD card stores: images in class folders
 // SD card stores: headers in bin and .h text char array format
+// Serial monitor and OLED output
 // By jeremy Ellis
 // Use at your own risk!
 // MIT license
 // Github Profile https://github.com/hpssjellis
 // LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
 //
-Can start with a blank SD card or match images into folders and update
-//   String myClassLabels[3] = {"0Background", "1CellPhone", "2Face"}; //in the code
+// If touch sensor at A0 is hard to activate try a small amount of hand cream rubbed into your hands well.
 // ======================================================
 
 
