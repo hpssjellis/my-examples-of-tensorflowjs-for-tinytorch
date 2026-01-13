@@ -935,7 +935,7 @@ void loop() {
       }
       myIsTouching = false;
       myLongPressTriggered = false;
-      delay(50); 
+      delay(200); 
     }
   }
 
