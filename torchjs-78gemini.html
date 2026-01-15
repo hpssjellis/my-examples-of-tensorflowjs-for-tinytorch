@@ -1,0 +1,1071 @@
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+
+<body style="font-family: sans-serif; background-color: #fdfdfd; padding: 10px;">
+
+<h2 align="center">Rocksetta Pro: Overflow-Protected Optimizer</h2>
+
+<div id="myCodeSpace"> 
+  <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; padding: 10px;">
+    
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+<label style="font-weight: bold; color: darkblue; cursor: pointer; display: block; margin-bottom: 8px;">
+  <input type="checkbox" id="myGrayscaleToggle" onchange="myCheckGrayscaleChange()"> Use Grayscale Mode
+</label>
+
+<p style="font-size: 11px; margin-top: -5px; color: #666;">
+  (Set BEFORE starting - 3x smaller model, needs MORE data & training)
+</p>
+
+<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px;">
+  <b>Model Res: (Careful changing these!)</b>
+  <input type="number" id="myResWidth" value="64" min="32" max="160" step="8" 
+         style="width: 55px; padding: 2px;" oninput="mySyncResolution()">
+  <span>x</span>
+  <input type="number" id="myResHeight" value="64" 
+         style="width: 55px; padding: 2px; background-color: #eee;" 
+         readonly title="Model must be square">
+</div>
+
+<select id="myCameraSelect" style="width: 100%; margin-bottom: 5px;"></select>
+
+<div align="center">
+    <video id="myVideo1" width="240" height="240" autoplay playsinline style="border: 2px solid black; background: #000; border-radius: 5px;"></video>
+    <canvas id="myCanvas1" width="240" height="240" style="display:none; border: 2px solid black; border-radius: 5px;"></canvas>
+</div>
+
+
+      <br>
+      <div style="display: flex; gap: 5px;">
+        <input type="button" id="myStartBtn" value="1. Start Camera & Brain" onclick="myStartAll()" style="flex: 1; font-weight:bold; padding:12px; background:#e1f5fe; border-radius: 5px; cursor:pointer;">
+        <input type="button" id="myStopCameraBtn" value="⏹ Stop Camera" onclick="myStopCamera()" style="flex: 1; font-weight:bold; padding:12px; background:#ffcdd2; border-radius: 5px; cursor:pointer; display:none;">
+      </div>
+      <hr>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+        <span><b>Max Buffer:</b></span>
+        <input type="number" id="myMaxBufferInput" value="100" min="10" max="500" style="width: 80px; padding: 2px;" title="Max samples stored per class" onchange="myUpdateMaxBuffer()">
+      </div>
+      <p style="font-size: 11px; margin-top: -5px; color: #666;">(Samples per class - higher = more memory)</p>
+      <hr>
+      <div style="display: flex; justify-content: space-between;">
+          <input type="button" value="Save TFJS" onclick="mySaveModel()" style="width:48%;">
+          <input type="button" value="Load TFJS" onclick="myLoadModel()" style="width:48%;">
+      </div>
+      <hr>
+      <b>Training:</b><br>
+      <div style="display: flex; justify-content: space-between; margin-top:5px; text-align:center;">
+        <div style="flex:1;">
+          <input type="button" value="Train 0" onclick="myCollect(0)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(0)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(0)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="text" id="myLabel0" value="Class 0" size="8" style="margin-top:3px;">
+          <br><span id="myCount0" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+        <div style="flex:1;">
+          <input type="button" value="Train 1" onclick="myCollect(1)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(1)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(1)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="text" id="myLabel1" value="Class 1" size="8" style="margin-top:3px;">
+          <br><span id="myCount1" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+        <div style="flex:1;">
+          <input type="button" value="Train 2" onclick="myCollect(2)" style="width:90%; margin-bottom:3px;">
+          <br><input type="button" value="Load" onclick="myLoadImages(2)" style="width:44%; font-size:10px; padding:3px;">
+          <input type="button" value="Clear" onclick="myClearImages(2)" style="width:44%; font-size:10px; padding:3px; background:#ffebee;">
+          <br><input type="text" id="myLabel2" value="Class 2" size="8" style="margin-top:3px;">
+          <br><span id="myCount2" style="font-size:11px; color:#666;">0 samples</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 2px solid green; padding: 15px; background: #f1f8e9; border-radius: 10px;">
+      <b>2. Training Progress</b><hr>
+      <div style="background: white; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span><b>Batches Trained:</b></span>
+          <span id="myEpochDisplay" style="font-weight: bold; color: #2196F3;">0</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Min Samples:</b></span>
+          <input type="number" id="myMinSamples" value="10" min="1" max="100" style="width: 80px; padding: 2px;" title="Minimum samples per class before training">
+        </div>
+        <div style="margin-bottom: 5px;">
+          <label style="cursor: pointer;">
+            <input type="checkbox" id="myUseAllData" checked onchange="myToggleEpochMode()"> Use All Data (systematic epochs)
+          </label>
+        </div>
+        <div id="myEpochControls" style="display: block;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+            <span><b>Target Epochs:</b></span>
+            <input type="number" id="myTargetEpochs" value="10" min="0" step="0.5" style="width: 80px; padding: 2px;" title="0 = Train Forever">
+          </div>
+          <p id="myEpochHint" style="font-size: 11px; margin: -3px 0 5px 0; color: #666;"></p>
+        </div>
+        <div id="myBatchControls" style="display: none;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+            <span><b>Max Batches:</b></span>
+            <input type="number" id="myMaxBatches" value="40" min="0" style="width: 80px; padding: 2px;" title="0 = Train Forever">
+          </div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Batch Size:</b></span>
+          <input type="number" id="myBatchSize" value="6" min="3" max="30" step="3" style="width: 80px; padding: 2px;" title="Total samples per batch (multiple of 3)">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Learning Rate:</b></span>
+          <input type="number" id="myLearningRate" value="0.001" min="0.0001" max="0.1" step="0.0001" style="width: 80px; padding: 2px;" title="How fast the model learns">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;">
+          <span><b>Dropout Rate:</b></span>
+          <input type="number" id="myDropoutRate" value="0.3" min="0.0" max="0.9" step="0.1" style="width: 80px; padding: 2px;" title="Dropout regularization (0=none, 0.5=aggressive)">
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span><b>Avg Loss:</b></span>
+          <span id="myLossDisplay" style="font-weight: bold; color: #FF9800;">--</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span><b>Training Status:</b></span>
+          <span id="myStatusDisplay" style="font-weight: bold; color: #9E9E9E;">Waiting...</span>
+        </div>
+        <div style="margin-top: 10px; display: flex; gap: 5px;">
+          <input type="button" id="myPauseBtn" value="⏸ Pause Training" onclick="myPauseTraining()" style="flex: 1; padding: 8px; background: #FF9800; color: white; font-weight: bold; border-radius: 5px; cursor: pointer;" disabled>
+          <input type="button" id="myResumeBtn" value="▶ Resume Training" onclick="myResumeTraining()" style="flex: 1; padding: 8px; background: #4CAF50; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">
+        </div>
+        <div style="margin-top: 10px; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
+          <div id="myProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #4CAF50, #8BC34A); transition: width 0.3s;"></div>
+        </div>
+      </div>
+      <hr>
+      <b>Edge AI Export</b><br>
+      <label style="font-weight: bold; color: darkgreen; cursor: pointer;">
+        <input type="checkbox" id="myInt8Toggle"> Use Int8 Quantization
+      </label>
+      <p style="font-size: 11px;">(Saves memory on ESP32)</p>
+      <b>Export Name:</b><br>
+      <input type="text" id="myExportName" value="myModel" style="width:70%;"> .h
+      <br><br>
+      <input type="button" value="GENERATE (.h & .bin)" style="background-color:#4CAF50; color:white; width:100%; padding:15px; font-weight:bold; border-radius: 5px; cursor:pointer;" onclick="myExportHeader()">
+      <br><br>
+      <input type="button" value="EXPORT IMAGES (Folders)" style="background-color:#607D8B; color:white; width:100%; padding:12px; font-weight:bold; border-radius: 5px; cursor:pointer;" onclick="myExportAllImages()">
+      <hr>
+      <input type="button" value="🔍 DEBUG Current Frame" style="background-color:#2196F3; color:white; width:100%; padding:12px; font-weight:bold; border-radius: 5px; cursor:pointer; margin-bottom:10px;" onclick="myDebugCurrentFrame()">
+      <hr>
+      <div style="margin-bottom: 10px; display: flex; gap: 5px;">
+        <input type="button" id="myStopAnalysisBtn" value="⏹ Stop Analysis" onclick="myStopAnalysis()" style="flex: 1; padding: 8px; background: #F44336; color: white; font-weight: bold; border-radius: 5px; cursor: pointer;" disabled>
+        <input type="button" id="myStartAnalysisBtn" value="▶ Start Analysis" onclick="myStartAnalysis()" style="flex: 1; padding: 8px; background: #2196F3; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; display: none;">
+      </div>
+      <div id="myOutputDisplay" style="border: 1px solid green; padding: 10px; background: white; min-height: 50px;">Ready...</div>
+    </div>
+
+    <div style="flex: 1; min-width: 350px; border: 1px solid #ccc; padding: 15px; background: white; border-radius: 10px;">
+      <b>3. Activity Logs</b><hr>
+      <div id="myDivHistory" style="border: 1px solid blue; padding: 8px; height: 300px; overflow-y: scroll; font-family: monospace; font-size: 0.85em; background: #f1f8ff; border-radius: 5px;">
+        Logs will appear here...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var myModel, myTimer, myLastID = -1;
+    var myTrainData = {0:[], 1:[], 2:[]};
+    var myMaxBuffer = 100;
+    var myEpochCount = 0;
+    var myLossHistory = [];
+    var myAccuracyHistory = [];
+    var myLossSum = 0;
+    var myLossCount = 0;
+    var myTrainingPaused = false;
+    var myAnalysisStopped = false;
+    var myIsGrayscaleMode = false;
+    var myGrayscaleRenderTimer = null;
+    var myAllDataIndex = 0;
+    var myCurrentEpoch = 0;
+    var myShuffledData = [];
+    var myCameraStopped = false;
+
+    function myLog(myMsg) {
+        const myDiv = document.getElementById('myDivHistory');
+        const myTime = new Date().toLocaleTimeString();
+        myDiv.innerHTML = `[${myTime}] ${myMsg}<br>` + myDiv.innerHTML;
+    }
+
+// Resolution helper
+function mySyncResolution() {
+    const myWidthValue = document.getElementById('myResWidth').value;
+    const myHeightInput = document.getElementById('myResHeight');
+    const myVideo = document.getElementById('myVideo1');
+    const myCanvas = document.getElementById('myCanvas1');
+
+    myHeightInput.value = myWidthValue;
+    
+    // Update display elements immediately
+    myVideo.width = myWidthValue;
+    myVideo.height = myWidthValue;
+    myCanvas.width = myWidthValue;
+    myCanvas.height = myWidthValue;
+}
+
+
+// Helper to process and reorder weights for C/ESP32 compatibility
+async function myProcessLayerWeights(myLayerName, myVarName, myShape, myIsConv) {
+    const myLayer = myModel.getLayer(myLayerName);
+    const myW = await myLayer.getWeights()[0].data();
+    const myB = await myLayer.getWeights()[1].data();
+    let myFlatW = new Float32Array(myW.length);
+
+    if (myIsConv) {
+        // TFJS [H, W, In, Out] -> C [Out, In, H, W]
+        let [kH, kW, inC, outC] = myShape;
+        let myIdx = 0;
+        for (let o = 0; o < outC; o++) {
+            for (let i = 0; i < inC; i++) {
+                for (let y = 0; y < kH; y++) {
+                    for (let x = 0; x < kW; x++) {
+                        myFlatW[myIdx++] = myW[y * kW * inC * outC + x * inC * outC + i * outC + o];
+                    }
+                }
+            }
+        }
+    } else {
+        // Dense: TFJS [In, Out] -> C [Out, In]
+        let [inS, outS] = myShape;
+        let myIdx = 0;
+        for (let o = 0; o < outS; o++) {
+            for (let i = 0; i < inS; i++) {
+                myFlatW[myIdx++] = myW[i * outS + o];
+            }
+        }
+    }
+    return { weights: myFlatW, bias: myB, name: myVarName };
+}
+
+// Function to export all training images individually into folders
+// Global variable to store the folder access
+let myBaseFolderHandle = null;
+
+
+   async function myExportAllImages() {
+   const myRes = parseInt(document.getElementById('myResWidth').value) || 64; // Add this
+    try {
+        myLog("Please select a destination folder for training images...");
+        // Ask user to choose the main folder once
+        const myBaseFolderHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+
+        for (let i = 0; i < 3; i++) {
+            const myLabel = document.getElementById('myLabel' + i).value.replace(/\s+/g, '_');
+            const myImages = myTrainData[i];
+            
+            // Create a subfolder for this specific label
+            const myLabelFolder = await myBaseFolderHandle.getDirectoryHandle(myLabel, { create: true });
+            myLog(`Saving ${myImages.length} images into /${myLabel}/...`);
+
+for (let j = 0; j < myImages.length; j++) {
+        const myTensor = myImages[j];
+        const myCanvas = document.createElement('canvas');
+        myCanvas.width = myRes; myCanvas.height = myRes; // Change 64 to myRes
+                
+                const mySqueezed = myTensor.squeeze().mul(255);
+                await tf.browser.toPixels(mySqueezed.cast('int32'), myCanvas);
+
+                const myBlob = await new Promise(resolve => myCanvas.toBlob(resolve, 'image/jpeg', 0.95));
+                
+                // Save silently using our helper
+                await mySilentSave(myLabelFolder, `img_${j}.jpg`, myBlob);
+
+                mySqueezed.dispose();
+                if (j % 5 === 0) await tf.nextFrame(); // Keep UI responsive
+            }
+        }
+        myLog("Success! All images organized and saved.");
+    } catch (err) {
+        if (err.name !== 'AbortError') myLog("Export Error: " + err.message);
+    }
+} 
+    
+    
+    // Universal download helper
+function myDownloadFile(myFileName, myContent, myType = "application/octet-stream") {
+    const myLink = document.createElement("a");
+    const myBlob = myContent instanceof Blob ? myContent : new Blob([myContent], { type: myType });
+    myLink.href = URL.createObjectURL(myBlob);
+    myLink.download = myFileName;
+    myLink.click();
+    setTimeout(() => URL.revokeObjectURL(myLink.href), 1000);
+}
+
+// Function to export model for ESP32 into a single chosen folder
+
+
+
+
+async function myExportHeader() {
+    if (!myModel) { myLog("Error: No Model to export"); return; }
+    myLog("Generating C Header and Binary formats...");
+
+    const myIsInt8 = document.getElementById('myInt8Toggle').checked;
+    const myChannels = myIsGrayscaleMode ? 1 : 3;
+    const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+
+    // Calculate the dynamic flattened size for the output layer
+    // Conv1 (3x3) reduces by 2 -> Pool1 (2x2) divides by 2 -> Conv2 (3x3) reduces by 2
+    //let myD = Math.floor((myRes - 2) / 2) - 2;
+    //let myFlatSize = myD * myD * 8; 
+const myFlattenLayer = myModel.layers.find(l => l.name.includes('flatten'));
+const myFlatSize = myFlattenLayer.outputShape[1];
+
+    // Process all layers using the calculated flat size
+    const myL1 = await myProcessLayerWeights('myConv1', 'myConv1', [3, 3, myChannels, 4], true);
+    const myL2 = await myProcessLayerWeights('myConv2', 'myConv2', [3, 3, 4, 8], true);
+    const myL3 = await myProcessLayerWeights('myOutput', 'myOutput', [myFlatSize, 3], false);
+    const myAllLayers = [myL1, myL2, myL3];
+
+
+
+    let myText = `// CNN Model Export - Res: ${myRes}x${myRes}\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+    // ADD THIS LINE:
+    myText += `#define MY_FLAT_SIZE ${myFlatSize}\n`;
+    myText += `const char* myClassLabels[3] = {"${document.getElementById('myLabel0').value}", "${document.getElementById('myLabel1').value}", "${document.getElementById('myLabel2').value}"};\n\n`;
+    if (myIsGrayscaleMode) myText += `#define USE_GRAYSCALE_MODE\n`;
+    
+    let myBinaryParts = [];
+    for (const myL of myAllLayers) {
+        myText += `const float ${myL.name}_w[] = { ${myL.weights.join(', ')} };\n`;
+        myText += `const float ${myL.name}_b[] = { ${myL.bias.join(', ')} };\n\n`;
+        myBinaryParts.push(myL.weights, myL.bias);
+    }
+    myText += `#endif`;
+
+    myDownloadFile(document.getElementById('myExportName').value + ".h", myText, "text/plain");
+    const myBinBlob = new Blob(myBinaryParts.map(w => new Uint8Array(w.buffer)));
+    myDownloadFile("myWeights.bin", myBinBlob);
+
+    myLog(`Export Complete! Flattened size: ${myFlatSize}`);
+}
+
+
+
+
+
+
+// Helper to save files directly to a folder handle
+async function mySilentSave(myFolderHandle, myFileName, myContent) {
+    const myFileHandle = await myFolderHandle.getFileHandle(myFileName, { create: true });
+    const myWritable = await myFileHandle.createWritable();
+    await myWritable.write(myContent);
+    await myWritable.close();
+}
+
+    function myUpdateMaxBuffer() {
+      myMaxBuffer = parseInt(document.getElementById('myMaxBufferInput').value) || 100;
+      myLog(`Max buffer updated to ${myMaxBuffer} samples per class`);
+    }
+
+    function myToggleEpochMode() {
+      const useAllData = document.getElementById('myUseAllData').checked;
+      document.getElementById('myEpochControls').style.display = useAllData ? 'block' : 'none';
+      document.getElementById('myBatchControls').style.display = useAllData ? 'none' : 'block';
+      myUpdateEpochHint();
+    }
+
+    function myUpdateEpochHint() {
+      if (!document.getElementById('myUseAllData').checked) return;
+      const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+      const totalSamples = counts[0] + counts[1] + counts[2];
+      const batchSizeInput = document.getElementById('myBatchSize');
+      const batchSize = batchSizeInput ? (parseInt(batchSizeInput.value) || 6) : 6;
+      const batchesPerEpoch = Math.ceil(totalSamples / batchSize);
+      const targetEpochsInput = document.getElementById('myTargetEpochs');
+      const targetEpochs = targetEpochsInput ? (parseFloat(targetEpochsInput.value) || 10) : 10;
+      const totalBatches = Math.ceil(targetEpochs * batchesPerEpoch);
+      const hintElement = document.getElementById('myEpochHint');
+      if (hintElement) {
+        if (totalSamples > 0) {
+          hintElement.innerText = `(≈ ${batchesPerEpoch} batches/epoch = ${totalBatches} total batches)`;
+        } else {
+          hintElement.innerText = '(Waiting for training data...)';
+        }
+      }
+    }
+
+    function myAugment(tensor) {
+      return tf.tidy(() => {
+        let augmented = tensor;
+        if (Math.random() > 0.5) {
+          const brightness = (Math.random() - 0.5) * 0.2;
+          augmented = augmented.add(brightness).clipByValue(0, 1);
+        }
+        if (Math.random() > 0.5) {
+          const contrast = 0.8 + Math.random() * 0.4;
+          const mean = augmented.mean();
+          augmented = augmented.sub(mean).mul(contrast).add(mean).clipByValue(0, 1);
+        }
+        return augmented;
+      });
+    }
+
+    function myStopAnalysis() {
+      myAnalysisStopped = true;
+      document.getElementById('myStopAnalysisBtn').style.display = 'none';
+      document.getElementById('myStartAnalysisBtn').style.display = 'block';
+      document.getElementById('myOutputDisplay').innerHTML = '<span style="color:#666;">Analysis Stopped</span>';
+      myLog("Analysis Stopped - Reduced resource usage");
+    }
+
+    function myStartAnalysis() {
+      myAnalysisStopped = false;
+      document.getElementById('myStopAnalysisBtn').style.display = 'block';
+      document.getElementById('myStartAnalysisBtn').style.display = 'none';
+      document.getElementById('myOutputDisplay').innerHTML = 'Analyzing...';
+      myLog("Analysis Started");
+    }
+
+    function myStopCamera() {
+      const myVideo = document.getElementById('myVideo1');
+      if (myVideo.srcObject) {
+        myVideo.srcObject.getTracks().forEach(track => track.stop());
+        myVideo.srcObject = null;
+      }
+      if (myGrayscaleRenderTimer) {
+        clearInterval(myGrayscaleRenderTimer);
+        myGrayscaleRenderTimer = null;
+      }
+      myCameraStopped = true;
+      document.getElementById('myStartBtn').style.display = 'block';
+      document.getElementById('myStopCameraBtn').style.display = 'none';
+      myLog("Camera Stopped - Training and analysis continue");
+    }
+
+    function myCheckGrayscaleChange() {
+      if (myModel) {
+        alert('⚠️ Changing color mode requires restarting Camera & Brain.\n\nPlease refresh the page or clear all training data to switch modes.');
+        document.getElementById('myGrayscaleToggle').checked = myIsGrayscaleMode;
+      } else if (document.getElementById('myGrayscaleToggle').checked) {
+        myLog("NOTE: Grayscale mode enabled. Recommend: 20+ samples/class, 80-100 batches, learning rate 0.002-0.003");
+      }
+    }
+
+async function myEnumerateCameras() {
+    const mySelect = document.getElementById('myCameraSelect');
+    try {
+        // We call getUserMedia once to trigger the "Allow Camera" prompt
+        // so that the browser can actually see the camera names (labels).
+        const myStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        myStream.getTracks().forEach(track => track.stop()); // Stop it immediately
+
+        const myDevices = await navigator.mediaDevices.enumerateDevices();
+        const myVideoDevices = myDevices.filter(device => device.kind === 'videoinput');
+        
+        mySelect.innerHTML = ''; // Clear the "empty" state
+        
+        myVideoDevices.forEach((device, index) => {
+            const myOption = document.createElement('option');
+            myOption.value = device.deviceId;
+            myOption.text = device.label || `Camera ${index + 1}`;
+            mySelect.appendChild(myOption);
+        });
+        
+        myLog(`Found ${myVideoDevices.length} cameras.`);
+    } catch (myErr) {
+        myLog("Camera Enumeration Error: " + myErr.message);
+    }
+}
+
+async function myStartAll() {
+    const myVideo = document.getElementById('myVideo1');
+    const myCanvas = document.getElementById('myCanvas1');
+    const myCtx = myCanvas.getContext('2d');
+    
+    // Get the dynamic resolution from your new input box
+    const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+
+    if (!myVideo.srcObject) {
+        myCameraStopped = false;
+        const myDeviceId = document.getElementById('myCameraSelect').value;
+        
+        // Update the constraints to use myRes instead of hardcoded 240
+        myVideo.srcObject = await navigator.mediaDevices.getUserMedia({
+            video: { 
+                width: myRes, 
+                height: myRes, 
+                deviceId: myDeviceId ? { exact: myDeviceId } : undefined 
+            }
+        });
+        myLog(`Camera Started at ${myRes}x${myRes}`);
+    document.getElementById('myStartBtn').style.display = 'none';
+    document.getElementById('myStopCameraBtn').style.display = 'block';
+    myIsGrayscaleMode = document.getElementById('myGrayscaleToggle').checked;
+
+    if (myIsGrayscaleMode) {
+      myVideo.style.display = 'none';
+      myCanvas.style.display = 'block';
+      if (myGrayscaleRenderTimer) clearInterval(myGrayscaleRenderTimer);
+      
+      myGrayscaleRenderTimer = setInterval(() => {
+        // Updated: Use myResWidth instead of 240
+        myCtx.drawImage(myVideo, 0, 0, myResWidth, myResWidth);
+        const myImageData = myCtx.getImageData(0, 0, myResWidth, myResWidth);
+        const myData = myImageData.data;
+        for (let i = 0; i < myData.length; i += 4) {
+          const myGray = myData[i] * 0.299 + myData[i+1] * 0.587 + myData[i+2] * 0.114;
+          myData[i] = myGray; myData[i+1] = myGray; myData[i+2] = myGray;
+        }
+        myCtx.putImageData(myImageData, 0, 0);
+      }, 33);
+    } else {
+      myVideo.style.display = 'block';
+      myCanvas.style.display = 'none';
+    }
+  }
+
+
+      if (!myModel) {
+        const inputChannels = myIsGrayscaleMode ? 1 : 3;
+        const myCurrentLearningRate = parseFloat(document.getElementById('myLearningRate').value) || 0.001;
+        const myCurrentDropoutRate = parseFloat(document.getElementById('myDropoutRate').value) || 0.3;
+        
+        myModel = tf.sequential();
+        // CONV1 with explicit name
+
+
+const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+        
+        myModel = tf.sequential();
+        myModel.add(tf.layers.conv2d({
+          name: 'myConv1',
+          inputShape:[myRes, myRes, inputChannels], // Changed from 64,64
+          kernelSize:3, 
+          filters:4, 
+          activation: null,
+          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), 
+          biasInitializer: 'zeros'
+        }));
+        myModel.add(tf.layers.leakyReLU({alpha: 0.1}));
+        myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
+        
+        // CONV2 with explicit name
+        myModel.add(tf.layers.conv2d({
+          name: 'myConv2',
+          kernelSize:3, 
+          filters:8, 
+          activation: null,
+          kernelRegularizer: tf.regularizers.l2({l2: 0.0001}), 
+          biasInitializer: 'zeros'
+        }));
+        myModel.add(tf.layers.leakyReLU({alpha: 0.1}));
+        myModel.add(tf.layers.flatten());
+        myModel.add(tf.layers.dropout({rate: myCurrentDropoutRate}));
+        
+        // OUTPUT with explicit name
+        myModel.add(tf.layers.dense({
+          name: 'myOutput',
+          units:3, 
+          activation:'softmax', 
+          kernelInitializer: 'heNormal', 
+          biasInitializer: 'zeros'
+        }));        
+        myModel.compile({
+          optimizer: tf.train.adam(myCurrentLearningRate), 
+          loss:'categoricalCrossentropy', 
+          metrics: ['accuracy']
+        });
+        myLog(`Brain Initialized (${myIsGrayscaleMode ? 'Grayscale' : 'RGB'} 2-Layer CNN with LeakyReLU, Dropout: ${myCurrentDropoutRate}, LR: ${myCurrentLearningRate})`);
+      }
+      if (myTimer) clearInterval(myTimer);
+
+
+
+
+
+myTimer = setInterval(async () => {
+  let myInput = null;
+  const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+
+  if (!myCameraStopped && myVideo.srcObject) {
+    // Replace hardcoded [64, 64] with [myRes, myRes]
+    myInput = tf.browser.fromPixels(myVideo).resizeBilinear([myRes, myRes]);
+    
+    if (myIsGrayscaleMode) {
+      const myOldInput = myInput;
+      myInput = tf.tidy(() => {
+        const r = myOldInput.slice([0, 0, 0], [myRes, myRes, 1]);
+        const g = myOldInput.slice([0, 0, 1], [myRes, myRes, 1]);
+        const b = myOldInput.slice([0, 0, 2], [myRes, myRes, 1]);
+        return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+      });
+      myOldInput.dispose();
+    }
+
+
+
+          const myOldInput2 = myInput;
+          myInput = myInput.div(255.0).expandDims(0);
+          myOldInput2.dispose();
+        }
+        
+        // Training logic (runs regardless of camera state)
+        const minSamples = parseInt(document.getElementById('myMinSamples').value) || 10;
+        const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+        const minCount = Math.min(...counts);
+        const maxCount = Math.max(...counts);
+        let myBatchSize = parseInt(document.getElementById('myBatchSize').value) || 6;
+        if (myBatchSize < 3) myBatchSize = 3;
+        if (myBatchSize % 3 !== 0) myBatchSize = Math.ceil(myBatchSize / 3) * 3;
+        const mySamplesPerClass = myBatchSize / 3;
+        const myUseAllData = document.getElementById('myUseAllData').checked;
+        let maxBatches = 0;
+        if (myUseAllData) {
+          const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
+          const totalSamples = counts[0] + counts[1] + counts[2];
+          const batchesPerEpoch = totalSamples > 0 ? Math.ceil(totalSamples / myBatchSize) : 1;
+          maxBatches = targetEpochs > 0 ? Math.ceil(targetEpochs * batchesPerEpoch) : 0;
+        } else {
+          maxBatches = parseInt(document.getElementById('myMaxBatches').value) || 0;
+        }
+        const reachedLimit = maxBatches > 0 && myEpochCount >= maxBatches;
+        if (minCount >= minSamples && !myTrainingPaused && !reachedLimit) {
+          if (maxCount > minCount * 2) {
+            if (Math.random() < 0.01) {
+              myLog(`WARNING: Imbalanced data [${counts[0]}, ${counts[1]}, ${counts[2]}]`);
+            }
+          }
+          let myBatch = []; let myLabels = [];
+          if (myUseAllData) {
+            if (myAllDataIndex === 0) {
+              myCurrentEpoch++; myShuffledData = [];
+              for (let cls = 0; cls < 3; cls++) {
+                for (let i = 0; i < myTrainData[cls].length; i++) {
+                  myShuffledData.push({sample: myTrainData[cls][i], label: cls});
+                }
+              }
+              for (let i = myShuffledData.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [myShuffledData[i], myShuffledData[j]] = [myShuffledData[j], myShuffledData[i]];
+              }
+              myLog(`Starting Epoch ${myCurrentEpoch} (${myShuffledData.length} samples)`);
+            }
+            for (let i = 0; i < myBatchSize && myAllDataIndex < myShuffledData.length; i++) {
+              const item = myShuffledData[myAllDataIndex];
+              const augmented = (Math.random() > 0.5) ? myAugment(item.sample) : tf.clone(item.sample);
+              myBatch.push(augmented);
+              myLabels.push(item.label === 0 ? [1,0,0] : item.label === 1 ? [0,1,0] : [0,0,1]);
+              myAllDataIndex++;
+            }
+            if (myAllDataIndex >= myShuffledData.length) { myAllDataIndex = 0; }
+          } else {
+            for (let cls = 0; cls < 3; cls++) {
+              for (let i = 0; i < mySamplesPerClass; i++) {
+                const randomIdx = Math.floor(Math.random() * myTrainData[cls].length);
+                const sample = myTrainData[cls][randomIdx];
+                const augmented = (Math.random() > 0.5) ? myAugment(sample) : tf.clone(sample);
+                myBatch.push(augmented);
+                myLabels.push(cls === 0 ? [1,0,0] : cls === 1 ? [0,1,0] : [0,0,1]);
+              }
+            }
+          }
+          const myBatchTensor = tf.concat(myBatch);
+          const myLabelsTensor = tf.tensor2d(myLabels);
+          let currentLoss = 0;
+          try {
+            const trainResult = await myModel.trainOnBatch(myBatchTensor, myLabelsTensor);
+            currentLoss = Array.isArray(trainResult) ? trainResult[0] : trainResult;
+            if (isNaN(currentLoss) || !isFinite(currentLoss)) {
+              myLog("WARNING: Invalid loss detected, skipping batch");
+              currentLoss = 0;
+            }
+          } catch (error) {
+            myLog("ERROR during training: " + error.message);
+            currentLoss = 0;
+          }
+          myBatchTensor.dispose(); myLabelsTensor.dispose();
+          myBatch.forEach(t => {
+            let isStoredSample = false;
+            for (let cls = 0; cls < 3; cls++) {
+              if (myTrainData[cls].includes(t)) { isStoredSample = true; break; }
+            }
+            if (!isStoredSample) t.dispose();
+          });
+          myEpochCount++;
+          if (currentLoss > 0) { myLossSum += currentLoss; myLossCount++; }
+          if (myEpochCount % 10 === 0) {
+            const avgLoss = myLossCount > 0 ? myLossSum / myLossCount : 0;
+            if (avgLoss > 0 && isFinite(avgLoss)) { myLossHistory.push(avgLoss); }
+            if (myLossHistory.length > 20) myLossHistory.shift();
+            const recentAvgLoss = myLossHistory.length > 0 ? myLossHistory.reduce((a,b) => a+b, 0) / myLossHistory.length : 0;
+            document.getElementById('myEpochDisplay').innerText = myEpochCount;
+            document.getElementById('myLossDisplay').innerText = myLossHistory.length > 0 ? recentAvgLoss.toFixed(4) : '--';
+            let status = ''; let statusColor = ''; let progressPercent = 0;
+            if (myLossHistory.length === 0) { status = 'Initializing...'; statusColor = '#9E9E9E'; progressPercent = 5; }
+            else if (recentAvgLoss > 1.0) { status = 'Starting...'; statusColor = '#FF5722'; progressPercent = 10; }
+            else if (recentAvgLoss > 0.5) { status = 'Training...'; statusColor = '#FF9800'; progressPercent = 30; }
+            else if (recentAvgLoss > 0.2) { status = 'Improving...'; statusColor = '#FFC107'; progressPercent = 60; }
+            else if (recentAvgLoss > 0.1) { status = 'Converging...'; statusColor = '#8BC34A'; progressPercent = 80; }
+            else { status = 'Well Trained ✓'; statusColor = '#4CAF50'; progressPercent = 100; }
+            document.getElementById('myStatusDisplay').innerText = status;
+            document.getElementById('myStatusDisplay').style.color = statusColor;
+            document.getElementById('myProgressBar').style.width = progressPercent + '%';
+            document.getElementById('myPauseBtn').disabled = false;
+            myLossSum = 0; myLossCount = 0;
+          }
+        } else if (reachedLimit) {
+          if (!myTrainingPaused) {
+            myPauseTraining();
+            if (myUseAllData) {
+              const targetEpochs = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
+              myLog(`Training complete: Reached ${targetEpochs} epochs`);
+            } else {
+              myLog(`Training stopped: Reached ${maxBatches} batches`);
+            }
+          }
+          const totalSamples = counts[0] + counts[1] + counts[2];
+          const batchesPerEpoch = totalSamples > 0 ? Math.ceil(totalSamples / myBatchSize) : 1;
+          const finalEpochs = (myEpochCount / batchesPerEpoch).toFixed(1);
+          document.getElementById('myStatusDisplay').innerText = `Completed (${finalEpochs} epochs, ${myEpochCount} batches)`;
+          document.getElementById('myStatusDisplay').style.color = '#4CAF50';
+        } else {
+          if (myTrainingPaused) {
+            document.getElementById('myStatusDisplay').innerText = 'Paused';
+            document.getElementById('myStatusDisplay').style.color = '#FF9800';
+          } else {
+            const myNeeds = [Math.max(0, minSamples - counts[0]), Math.max(0, minSamples - counts[1]), Math.max(0, minSamples - counts[2])];
+            document.getElementById('myStatusDisplay').innerText = `Waiting (need: ${myNeeds[0]}, ${myNeeds[1]}, ${myNeeds[2]} more)`;
+            document.getElementById('myStatusDisplay').style.color = '#9E9E9E';
+          }
+        }
+        
+        // Analysis (only if camera is running and not stopped)
+        if (myInput && !myAnalysisStopped) {
+          document.getElementById('myStopAnalysisBtn').disabled = false;
+          const myPred = myModel.predict(myInput);
+          const myProbs = await myPred.data();
+          const myID = (await myPred.argMax(1).data())[0];
+          const conf0 = (myProbs[0] * 100).toFixed(1);
+          const conf1 = (myProbs[1] * 100).toFixed(1);
+          const conf2 = (myProbs[2] * 100).toFixed(1);
+          const maxConf = Math.max(myProbs[0], myProbs[1], myProbs[2]) * 100;
+          const confColor = maxConf > 80 ? 'green' : maxConf > 50 ? 'orange' : 'red';
+          const uncertainWarning = maxConf < 50 ? '<br><span style="color:red;">⚠ Low Confidence - Need More Training?</span>' : '';
+          
+          // Show detailed confidence breakdown
+          document.getElementById('myOutputDisplay').innerHTML = 
+            `<div style="font-weight:bold; font-size:1.1em; margin-bottom:8px;">DETECTED: <span style="color:${confColor}">${document.getElementById('myLabel'+myID).value}</span></div>` +
+            `<div style="font-family:monospace; font-size:0.9em;">` +
+            `${document.getElementById('myLabel0').value}: <b style="color:${myID===0?'green':'#666'}">${conf0}%</b><br>` +
+            `${document.getElementById('myLabel1').value}: <b style="color:${myID===1?'green':'#666'}">${conf1}%</b><br>` +
+            `${document.getElementById('myLabel2').value}: <b style="color:${myID===2?'green':'#666'}">${conf2}%</b>` +
+            `</div>` +
+            uncertainWarning;
+          
+          myPred.dispose();
+        } else if (myCameraStopped) {
+          document.getElementById('myOutputDisplay').innerHTML = '<span style="color:#666;">Camera Stopped - Training continues...</span>';
+        }
+        
+        // Cleanup camera input tensor
+        if (myInput) {
+          myInput.dispose();
+        }
+      }, 150);
+    }
+
+    function myPauseTraining() {
+      myTrainingPaused = true;
+      document.getElementById('myPauseBtn').style.display = 'none';
+      document.getElementById('myResumeBtn').style.display = 'block';
+      myLog("Training Paused - Safe to export model");
+    }
+
+
+
+async function myDebugCurrentFrame() {
+  const myVideo = document.getElementById('myVideo1');
+//  const myRes = document.getElementById('myResWidth').value;
+const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+
+  if (!myVideo.srcObject || myCameraStopped) {
+    myLog("ERROR: Camera not running! Start camera first.");
+    return;
+  }
+  if (!myModel) {
+    myLog("ERROR: Model not initialized! Start Camera & Brain first.");
+    return;
+  }
+
+  myLog(`========== DEBUG (${myRes}x${myRes} Source) ==========`);
+  
+  // Resizing to 64x64 is what the ESP32 will do internally // now uses myRes for changeability
+  let myInput = tf.browser.fromPixels(myVideo).resizeBilinear([myRes, myRes]);
+  
+  if (myIsGrayscaleMode) {
+    const myOldInput = myInput;
+    myInput = tf.tidy(() => {
+      const r = myOldInput.slice([0, 0, 0], [myRes, myRes, 1]);
+      const g = myOldInput.slice([0, 0, 1], [myRes, myRes, 1]);
+      const b = myOldInput.slice([0, 0, 2], [myRes, myRes, 1]);
+      return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+    });
+    myOldInput.dispose();
+  }
+  
+  const myOldInput2 = myInput;
+  myInput = myInput.div(255.0).expandDims(0);
+  myOldInput2.dispose();
+  
+  // Analyze input data for clipping or issues
+  const myInputData = await myInput.data();
+  let myInMin = 10, myInMax = -10, myInSum = 0;
+  for (let i = 0; i < myInputData.length; i++) {
+    if (myInputData[i] < myInMin) myInMin = myInputData[i];
+    if (myInputData[i] > myInMax) myInMax = myInputData[i];
+    myInSum += myInputData[i];
+  }
+  
+  myLog(`INPUT - Min: ${myInMin.toFixed(4)} Max: ${myInMax.toFixed(4)} Avg: ${(myInSum / myInputData.length).toFixed(4)}`);
+  
+  // Perform a test prediction
+  const myPrediction = myModel.predict(myInput);
+  const myProbs = await myPrediction.data();
+  myLog(`Probabilities: [${Array.from(myProbs).map(p => (p*100).toFixed(1) + '%').join(', ')}]`);
+  
+  myLog("========== END DEBUG ==========");
+  
+  myInput.dispose();
+  myPrediction.dispose();
+}
+    function myResumeTraining() {
+      myTrainingPaused = false;
+      document.getElementById('myPauseBtn').style.display = 'block';
+      document.getElementById('myResumeBtn').style.display = 'none';
+      myLog("Training Resumed");
+    }
+
+    function toCString(str) {
+      str = str.substring(0, 20);
+      return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+    }
+
+
+
+
+async function myExportHeader() {
+    if (!myModel) { myLog("Error: No Model to export"); return; }
+    myLog("Generating C Header and Binary formats...");
+
+    const myIsInt8 = document.getElementById('myInt8Toggle').checked;
+    const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+    const myChannels = myIsGrayscaleMode ? 1 : 3;
+
+    const myFlattenLayer = myModel.layers.find(l => l.name.includes('flatten'));
+    const myFlatSize = myFlattenLayer.outputShape[1];
+
+    // Process weights (myProcessLayerWeights handles the Int8 math)
+    const myL1 = await myProcessLayerWeights('myConv1', 'myConv1', [3, 3, myChannels, 4], true);
+    const myL2 = await myProcessLayerWeights('myConv2', 'myConv2', [3, 3, 4, 8], true);
+    const myL3 = await myProcessLayerWeights('myOutput', 'myOutput', [myFlatSize, 3], false);
+    const myAllLayers = [myL1, myL2, myL3];
+
+    let myText = `// CNN Model Export - Res: ${myRes}x${myRes}\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+    myText += `#define MY_FLAT_SIZE ${myFlatSize}\n`;
+    if (myIsInt8) myText += `#define USE_INT8_MODE\n`;
+    if (myIsGrayscaleMode) myText += `#define USE_GRAYSCALE_MODE\n`;
+    
+    myText += `const char* myClassLabels[3] = {"${document.getElementById('myLabel0').value}", "${document.getElementById('myLabel1').value}", "${document.getElementById('myLabel2').value}"};\n\n`;
+
+    let myBinaryParts = [];
+    for (const myL of myAllLayers) {
+        const myType = myIsInt8 ? "int8_t" : "float";
+        myText += `const ${myType} ${myL.name}_w[] = { ${myL.weights.join(', ')} };\n`;
+        // Scale factors are ALWAYS floats
+        myText += `const float ${myL.name}_w_scale = ${myL.w_scale || 1.0};\n`;
+        myText += `const ${myType} ${myL.name}_b[] = { ${myL.bias.join(', ')} };\n`;
+        myText += `const float ${myL.name}_b_scale = ${myL.b_scale || 1.0};\n\n`;
+        
+        myBinaryParts.push(myL.weights, myL.bias);
+    }
+    myText += `#endif`;
+
+    // SMART BINARY EXPORT: Logic to handle data types correctly
+    let myBinBlob;
+    let myTotalLen = myBinaryParts.reduce((a, b) => a + b.length, 0);
+    
+    if (myIsInt8) {
+        let myCombined = new Int8Array(myTotalLen);
+        let myOffset = 0;
+        for (const myPart of myBinaryParts) {
+            myCombined.set(myPart, myOffset);
+            myOffset += myPart.length;
+        }
+        myBinBlob = new Blob([myCombined.buffer]);
+    } else {
+        let myCombined = new Float32Array(myTotalLen);
+        let myOffset = 0;
+        for (const myPart of myBinaryParts) {
+            myCombined.set(myPart, myOffset);
+            myOffset += myPart.length;
+        }
+        myBinBlob = new Blob([myCombined.buffer]);
+    }
+
+    myDownloadFile(document.getElementById('myExportName').value + ".h", myText, "text/plain");
+    myDownloadFile("myWeights.bin", myBinBlob);
+    myLog(`Export Complete! Mode: ${myIsInt8 ? 'INT8' : 'Float32'}, FlatSize: ${myFlatSize}`);
+}
+
+
+function myCollect(myID) {
+  const myVideo = document.getElementById('myVideo1');
+  if (!myVideo.srcObject || myCameraStopped) { myLog("ERROR: Camera not running!"); return; }
+  
+  // FIXED: Added this line so the function knows what 'myRes' is
+  const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+
+  let myFrame = tf.browser.fromPixels(myVideo).resizeBilinear([myRes, myRes]);
+  
+  if (myIsGrayscaleMode) {
+    const myOldFrame = myFrame;
+    myFrame = tf.tidy(() => {
+      // Now myRes is correctly defined for these slices
+      const r = myOldFrame.slice([0, 0, 0], [myRes, myRes, 1]);
+      const g = myOldFrame.slice([0, 0, 1], [myRes, myRes, 1]);
+      const b = myOldFrame.slice([0, 0, 2], [myRes, myRes, 1]);
+      return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+    });
+    myOldFrame.dispose();
+  }
+
+  const myOldFrame2 = myFrame;
+  myFrame = myFrame.div(255.0).expandDims(0);
+  myOldFrame2.dispose();
+  
+  const frameData = myFrame.dataSync();
+  let hasNaN = false;
+  for (let i = 0; i < frameData.length; i++) {
+    if (isNaN(frameData[i]) || !isFinite(frameData[i])) { hasNaN = true; break; }
+  }
+  
+  if (hasNaN) { 
+    myLog("ERROR: Invalid camera frame detected, skipping"); 
+    myFrame.dispose(); 
+    return; 
+  }
+  
+  if (myTrainData[myID].length < myMaxBuffer) {
+    myTrainData[myID].push(myFrame);
+  } else {
+    myTrainData[myID][0].dispose();
+    myTrainData[myID].shift();
+    myTrainData[myID].push(myFrame);
+  }
+  
+  document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
+  myLog(`Class ${myID} Captured (Total: ${myTrainData[myID].length})`);
+  myUpdateEpochHint();
+}
+async function myLoadImages(myID) {
+  // Get the current user-defined resolution
+  const myRes = parseInt(document.getElementById('myResWidth').value) || 64;
+  
+  const myInput = document.createElement('input');
+  myInput.type = 'file'; 
+  myInput.multiple = true; 
+  myInput.accept = 'image/*';
+
+  myInput.onchange = async (myEvent) => {
+    const myFiles = Array.from(myEvent.target.files);
+    myLog(`Loading ${myFiles.length} images for Class ${myID}...`);
+    let myLoadedCount = 0;
+
+    for (const myFile of myFiles) {
+      try {
+        const myImg = new Image();
+        const myUrl = URL.createObjectURL(myFile);
+        
+        await new Promise((myResolve, myReject) => {
+          myImg.onload = () => {
+            try {
+              // Resize using the dynamic user-defined resolution
+              let myTensor = tf.browser.fromPixels(myImg).resizeBilinear([myRes, myRes]);
+
+              if (myIsGrayscaleMode) {
+                const myOldTensor = myTensor;
+                myTensor = tf.tidy(() => {
+                  // Use myRes for slicing dimensions
+                  const myR = myOldTensor.slice([0, 0, 0], [myRes, myRes, 1]);
+                  const myG = myOldTensor.slice([0, 0, 1], [myRes, myRes, 1]);
+                  const myB = myOldTensor.slice([0, 0, 2], [myRes, myRes, 1]);
+                  return myR.mul(0.299).add(myG.mul(0.587)).add(myB.mul(0.114));
+                });
+                myOldTensor.dispose();
+              }
+
+              const myOldTensor2 = myTensor;
+              myTensor = myTensor.div(255.0).expandDims(0);
+              myOldTensor2.dispose();
+
+              const myData = myTensor.dataSync();
+              let myIsValid = true;
+              for (let i = 0; i < myData.length; i++) {
+                if (isNaN(myData[i]) || !isFinite(myData[i])) { 
+                  myIsValid = false; 
+                  break; 
+                }
+              }
+
+              if (myIsValid) {
+                if (myTrainData[myID].length < myMaxBuffer) {
+                  myTrainData[myID].push(myTensor);
+                } else {
+                  myTrainData[myID][0].dispose();
+                  myTrainData[myID].shift();
+                  myTrainData[myID].push(myTensor);
+                }
+                myLoadedCount++;
+              } else { 
+                myTensor.dispose(); 
+              }
+
+              URL.revokeObjectURL(myUrl);
+              myResolve();
+            } catch (myErr) { 
+              URL.revokeObjectURL(myUrl); 
+              myReject(myErr); 
+            }
+          };
+          myImg.onerror = () => { 
+            URL.revokeObjectURL(myUrl); 
+            myReject(new Error('Failed to load image')); 
+          };
+          myImg.src = myUrl;
+        });
+      } catch (myErr) { 
+        console.error('Error loading image:', myErr); 
+      }
+    }
+    
+    document.getElementById('myCount' + myID).innerHTML = `${myTrainData[myID].length} samples`;
+    myLog(`Class ${myID}: Loaded ${myLoadedCount}/${myFiles.length} images (Total: ${myTrainData[myID].length})`);
+    myUpdateEpochHint();
+  };
+  myInput.click();
+}
+
+    function myClearImages(myID) {
+      if (myTrainData[myID].length === 0) { myLog(`Class ${myID}: Already empty`); return; }
+      const count = myTrainData[myID].length;
+      myTrainData[myID].forEach(tensor => tensor.dispose());
+      myTrainData[myID] = [];
+      document.getElementById('myCount' + myID).innerHTML = `0 samples`;
+      myLog(`Class ${myID}: Cleared ${count} samples`);
+      myUpdateEpochHint();
+    }
+
+    async function mySaveModel() { await myModel.save('downloads://my-tfjs-model'); myLog("TFJS Model Saved"); }
+    async function myLoadModel() {
+        const myU = document.createElement('input'); myU.type = 'file'; myU.multiple = true;
+        myU.onchange = async (e) => { myModel = await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog("TFJS Model Loaded"); };
+        myU.click();
+    }
+
+// This runs as soon as the page finishes loading
+window.addEventListener('load', myEnumerateCameras);
+
+
+  </script>
