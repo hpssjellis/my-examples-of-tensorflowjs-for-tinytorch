@@ -1,0 +1,557 @@
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <vector>
+#include <U8g2lib.h>
+#include <Wire.h>
+
+U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE);
+
+// ======================================================
+// CNN ARCHITECTURE CONSTANTS
+// ======================================================
+#define CONV1_KERNEL_SIZE 3
+#define CONV1_FILTERS 4
+#define CONV1_WEIGHTS (CONV1_KERNEL_SIZE * CONV1_KERNEL_SIZE * 3 * CONV1_FILTERS) // 108
+
+#define CONV2_KERNEL_SIZE 3
+#define CONV2_FILTERS 8
+#define CONV2_WEIGHTS (CONV2_KERNEL_SIZE * CONV2_KERNEL_SIZE * 4 * CONV2_FILTERS) // 288
+
+#define POOL1_SIZE 31
+#define CONV2_OUTPUT_SIZE 29
+#define FLATTENED_SIZE (CONV2_OUTPUT_SIZE * CONV2_OUTPUT_SIZE * CONV2_FILTERS) // 6728
+
+#define NUM_CLASSES 3
+#define OUTPUT_WEIGHTS (FLATTENED_SIZE * NUM_CLASSES) // 20184
+
+// ======================================================
+// CONFIGURATION & ML HYPERPARAMETERS
+// ======================================================
+const int myTotalItems = 5;      
+const int myThresholdPress = 1100;
+const int myThresholdRelease = 900;
+const int myLongPressTime = 900;
+const unsigned long myScreenTimeout = 300000; 
+
+String myClassLabels[3] = {"0blank", "1pen", "2cellPhone"};
+
+float LEARNING_RATE = 0.0003;
+int BATCH_SIZE = 12;
+int TARGET_EPOCHS = 10;
+
+// SYSTEM LOGIC VARIABLES
+unsigned long myTouchStart = 0;
+unsigned long myLastActivityTime = 0; 
+unsigned long myLastTapTime = 0;
+const int myTapCooldown = 250;
+bool myIsTouching = false;
+bool myLongPressTriggered = false; 
+int myMenuIndex = 1;
+bool myIsSelected = false;
+
+// ML Buffers (PSRAM)
+float* myInputBuffer = nullptr;   
+float* myConv1_w = nullptr;      
+float* myConv1_b = nullptr;      
+float* myConv2_w = nullptr;      
+float* myConv2_b = nullptr;      
+float* myOutput_w = nullptr;     
+float* myOutput_b = nullptr;
+
+// Gradient buffers for backpropagation
+float* myConv1_w_grad = nullptr;
+float* myConv1_b_grad = nullptr;
+float* myConv2_w_grad = nullptr;
+float* myConv2_b_grad = nullptr;
+float* myOutput_w_grad = nullptr;
+float* myOutput_b_grad = nullptr;
+
+// Adam optimizer momentum buffers
+float* myConv1_w_m = nullptr;
+float* myConv1_w_v = nullptr;
+float* myConv1_b_m = nullptr;
+float* myConv1_b_v = nullptr;
+float* myConv2_w_m = nullptr;
+float* myConv2_w_v = nullptr;
+float* myConv2_b_m = nullptr;
+float* myConv2_b_v = nullptr;
+float* myOutput_w_m = nullptr;
+float* myOutput_w_v = nullptr;
+float* myOutput_b_m = nullptr;
+float* myOutput_b_v = nullptr;
+
+// Forward pass buffers
+float* myConv1_output = nullptr;
+float* myPool1_output = nullptr;
+float* myConv2_output = nullptr;
+float* myDense_output = nullptr;
+
+// Backward pass buffers
+float* myDense_grad = nullptr;
+float* myConv2_grad = nullptr;
+float* myPool1_grad = nullptr;
+float* myConv1_grad = nullptr;     
+
+struct TrainingItem {
+  String path;
+  int label;
+};
+std::vector<TrainingItem> myTrainingData;
+
+// XIAO ESP32-S3 Camera Pins
+#define PWDN_GPIO_NUM     -1
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM     10
+#define SIOD_GPIO_NUM     40
+#define SIOC_GPIO_NUM     39
+#define Y9_GPIO_NUM       48
+#define Y8_GPIO_NUM       11
+#define Y7_GPIO_NUM       12
+#define Y6_GPIO_NUM       14
+#define Y5_GPIO_NUM       16
+#define Y4_GPIO_NUM       18
+#define Y3_GPIO_NUM       17
+#define Y2_GPIO_NUM       15
+#define VSYNC_GPIO_NUM    38
+#define HREF_GPIO_NUM     47
+#define PCLK_GPIO_NUM     13
+
+inline float clip_value(float v, float mn=-100, float mx=100) {
+  if(isnan(v)||isinf(v)) return 0;
+  return constrain(v,mn,mx);
+}
+
+inline float leaky_relu(float x) { return x>0 ? x : 0.1f*x; }
+inline float leaky_relu_deriv(float x) { return x>0 ? 1.0f : 0.1f; }
+
+int myReadTouch() {
+  int sum = 0;
+  for(int i=0; i<3; i++) {
+    sum += analogRead(A0);
+    delayMicroseconds(100);
+  }
+  return sum / 3;
+}
+
+void myResetMenuState() {
+  myIsSelected = false;
+  myIsTouching = false;
+  myLongPressTriggered = false;
+  myLastActivityTime = millis();
+}
+
+void myDisplayImageOnOLED(camera_fb_t* fb, int imageCount) {
+  size_t myRgbBufferSize = fb->width * fb->height * 3;
+  uint8_t* myRgbBuffer = (uint8_t*)ps_malloc(myRgbBufferSize);
+  
+  if (myRgbBuffer == NULL) {
+    Serial.println("Failed to allocate RGB buffer for OLED preview");
+    return;
+  }
+  
+  bool conversionSuccess = fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer);
+  
+  if (!conversionSuccess) {
+    free(myRgbBuffer);
+    Serial.println("Failed to convert JPEG to RGB888 for OLED");
+    return;
+  }
+  
+  int myOledWidth = u8g2.getDisplayWidth();
+  int myOledHeight = u8g2.getDisplayHeight();
+  int myImageWidth = fb->width;
+  int myImageHeight = fb->height;
+  int myScaleX = myImageWidth / myOledWidth;
+  int myScaleY = myImageHeight / myOledHeight;
+  
+  u8g2.firstPage();
+  do {
+    for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
+      for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
+        int myImageX = myOledX * myScaleX;
+        int myImageY = myOledY * myScaleY;
+        size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
+        
+        if (myPixelIndex + 2 < myRgbBufferSize) {
+          uint8_t myRed = myRgbBuffer[myPixelIndex];
+          uint8_t myGreen = myRgbBuffer[myPixelIndex + 1];
+          uint8_t myBlue = myRgbBuffer[myPixelIndex + 2];
+          uint8_t myBrightness = (myRed + myGreen + myBlue) / 3;
+          
+          if (myBrightness > 100) {
+            u8g2.drawPixel(myOledX, myOledY);
+          }
+        }
+      }
+    }
+    
+    u8g2.setFont(u8g2_font_ncenB10_tr);
+    u8g2.setColorIndex(0);
+    u8g2.drawBox(0, 0, 20, 15);
+    u8g2.setColorIndex(1);
+    u8g2.setCursor(3, 10);
+    u8g2.print(String(imageCount));
+    
+  } while (u8g2.nextPage());
+  
+  free(myRgbBuffer);
+}
+
+void myDisplayLiveCameraPreview() {
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) return;
+  
+  size_t myRgbBufferSize = fb->width * fb->height * 3;
+  uint8_t* myRgbBuffer = (uint8_t*)ps_malloc(myRgbBufferSize);
+  
+  if (myRgbBuffer && fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer)) {
+    int myOledWidth = u8g2.getDisplayWidth();
+    int myOledHeight = u8g2.getDisplayHeight();
+    int myImageWidth = fb->width;
+    int myImageHeight = fb->height;
+    int myScaleX = myImageWidth / myOledWidth;
+    int myScaleY = myImageHeight / myOledHeight;
+    
+    u8g2.firstPage();
+    do {
+      for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
+        for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
+          int myImageX = myOledX * myScaleX;
+          int myImageY = myOledY * myScaleY;
+          size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
+          
+          if (myPixelIndex + 2 < myRgbBufferSize) {
+            uint8_t myBrightness = (myRgbBuffer[myPixelIndex] + 
+                                    myRgbBuffer[myPixelIndex + 1] + 
+                                    myRgbBuffer[myPixelIndex + 2]) / 3;
+            if (myBrightness > 100) {
+              u8g2.drawPixel(myOledX, myOledY);
+            }
+          }
+        }
+      }
+      u8g2.setFont(u8g2_font_5x7_tf);
+      u8g2.setColorIndex(0);
+      u8g2.drawBox(50, 0, 22, 8);
+      u8g2.setColorIndex(1);
+      u8g2.drawStr(52, 7, "LIVE");
+    } while (u8g2.nextPage());
+    
+    free(myRgbBuffer);
+  }
+  
+  esp_camera_fb_return(fb);
+}
+
+void myAllocateMemory() {
+  if (myInputBuffer != nullptr) return;
+  
+  Serial.println("\n=== Allocating Memory ===");
+  
+  myInputBuffer = (float*)ps_malloc(64 * 64 * 3 * sizeof(float));
+  myConv1_w = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
+  myConv1_b = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
+  myConv2_w = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
+  myConv2_b = (float*)ps_malloc(CONV2_FILTERS * sizeof(float));
+  myOutput_w = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
+  myOutput_b = (float*)ps_malloc(NUM_CLASSES * sizeof(float));
+
+  myConv1_w_grad = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
+  myConv1_b_grad = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
+  myConv2_w_grad = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
+  myConv2_b_grad = (float*)ps_malloc(CONV2_FILTERS * sizeof(float));
+  myOutput_w_grad = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
+  myOutput_b_grad = (float*)ps_malloc(NUM_CLASSES * sizeof(float));
+
+  myConv1_w_m = (float*)ps_calloc(CONV1_WEIGHTS, sizeof(float));
+  myConv1_w_v = (float*)ps_calloc(CONV1_WEIGHTS, sizeof(float));
+  myConv1_b_m = (float*)ps_calloc(CONV1_FILTERS, sizeof(float));
+  myConv1_b_v = (float*)ps_calloc(CONV1_FILTERS, sizeof(float));
+  myConv2_w_m = (float*)ps_calloc(CONV2_WEIGHTS, sizeof(float));
+  myConv2_w_v = (float*)ps_calloc(CONV2_WEIGHTS, sizeof(float));
+  myConv2_b_m = (float*)ps_calloc(CONV2_FILTERS, sizeof(float));
+  myConv2_b_v = (float*)ps_calloc(CONV2_FILTERS, sizeof(float));
+  myOutput_w_m = (float*)ps_calloc(OUTPUT_WEIGHTS, sizeof(float));
+  myOutput_w_v = (float*)ps_calloc(OUTPUT_WEIGHTS, sizeof(float));
+  myOutput_b_m = (float*)ps_calloc(NUM_CLASSES, sizeof(float));
+  myOutput_b_v = (float*)ps_calloc(NUM_CLASSES, sizeof(float));
+
+  myConv1_output = (float*)ps_malloc(62*62*CONV1_FILTERS*sizeof(float));
+  myPool1_output = (float*)ps_malloc(31*31*CONV1_FILTERS*sizeof(float));
+  myConv2_output = (float*)ps_malloc(29*29*CONV2_FILTERS*sizeof(float));
+  myDense_output = (float*)ps_malloc(NUM_CLASSES*sizeof(float));
+
+  myDense_grad = (float*)ps_malloc(FLATTENED_SIZE*sizeof(float));
+  myConv2_grad = (float*)ps_malloc(29*29*CONV2_FILTERS*sizeof(float));
+  myPool1_grad = (float*)ps_malloc(31*31*CONV1_FILTERS*sizeof(float));
+  myConv1_grad = (float*)ps_malloc(62*62*CONV1_FILTERS*sizeof(float));
+
+  if (!myInputBuffer || !myConv1_w || !myConv2_w || !myOutput_w || 
+      !myConv1_output || !myPool1_output || !myConv2_output) {
+    Serial.println("FATAL: PSRAM allocation failed!");
+    u8g2.firstPage();
+    do { u8g2.drawStr(0, 15, "PSRAM ERROR!"); } while (u8g2.nextPage());
+    while(1) { delay(1000); }
+  }
+
+  Serial.printf("Free PSRAM after allocation: %d bytes\n", ESP.getFreePsram());
+
+  float c1std = sqrt(2.0/(9.0*3));
+  for(int i=0; i<CONV1_WEIGHTS; i++) myConv1_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * c1std;
+  for(int i=0; i<CONV1_FILTERS; i++) myConv1_b[i] = 0;
+  
+  float c2std = sqrt(2.0/36.0);
+  for(int i=0; i<CONV2_WEIGHTS; i++) myConv2_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * c2std;
+  for(int i=0; i<CONV2_FILTERS; i++) myConv2_b[i] = 0;
+  
+  float dstd = sqrt(2.0/FLATTENED_SIZE);
+  for(int i=0; i<OUTPUT_WEIGHTS; i++) myOutput_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * dstd;
+  for(int i=0; i<NUM_CLASSES; i++) myOutput_b[i] = 0;
+}
+
+void myExportHeader() {
+  if (!SD.exists("/header")) SD.mkdir("/header");
+  File file = SD.open("/header/myModel.h", FILE_WRITE);
+  if (!file) return;
+  file.println("#ifndef MY_MODEL_H\n#define MY_MODEL_H");
+  auto myDump = [&](const char* name, float* data, int size) {
+    file.printf("const float %s[] = { ", name);
+    for(int i=0; i<size; i++) {
+      file.print(data[i], 6); file.print("f");
+      if(i < size-1) file.print(", ");
+      if((i+1)%8 == 0) file.println();
+    }
+    file.println(" };");
+  };
+  myDump("myConv1_w", myConv1_w, CONV1_WEIGHTS);
+  myDump("myConv1_b", myConv1_b, CONV1_FILTERS);
+  myDump("myConv2_w", myConv2_w, CONV2_WEIGHTS);
+  myDump("myConv2_b", myConv2_b, CONV2_FILTERS);
+  myDump("myOutput_w", myOutput_w, OUTPUT_WEIGHTS);
+  myDump("myOutput_b", myOutput_b, NUM_CLASSES);
+  file.println("#endif");
+  file.close();
+}
+
+bool myLoadWeights() {
+  if (!SD.exists("/header/myWeights.bin")) {
+    Serial.println("No saved weights found - will initialize randomly");
+    return false;
+  }
+  Serial.println("Loading weights from SD...");
+  File f = SD.open("/header/myWeights.bin", FILE_READ);
+  if (!f) return false;
+  myAllocateMemory();
+  f.read((uint8_t*)myConv1_w, CONV1_WEIGHTS*4); 
+  f.read((uint8_t*)myConv1_b, CONV1_FILTERS*4);
+  f.read((uint8_t*)myConv2_w, CONV2_WEIGHTS*4); 
+  f.read((uint8_t*)myConv2_b, CONV2_FILTERS*4);
+  f.read((uint8_t*)myOutput_w, OUTPUT_WEIGHTS*4); 
+  f.read((uint8_t*)myOutput_b, NUM_CLASSES*4);
+  f.close();
+  Serial.println("Weights loaded successfully");
+  return true;
+}
+
+void mySaveWeights() {
+  if (!SD.exists("/header")) SD.mkdir("/header");
+  File f = SD.open("/header/myWeights.bin", FILE_WRITE);
+  if (f) {
+    f.write((uint8_t*)myConv1_w, CONV1_WEIGHTS*4); 
+    f.write((uint8_t*)myConv1_b, CONV1_FILTERS*4);
+    f.write((uint8_t*)myConv2_w, CONV2_WEIGHTS*4); 
+    f.write((uint8_t*)myConv2_b, CONV2_FILTERS*4);
+    f.write((uint8_t*)myOutput_w, OUTPUT_WEIGHTS*4); 
+    f.write((uint8_t*)myOutput_b, NUM_CLASSES*4);
+    f.close();
+    Serial.println("Weights saved to SD");
+  }
+  myExportHeader();
+}
+
+bool myLoadImageFromFile(const char* path, float* buf) {
+  File f = SD.open(path);
+  if(!f) return false;
+  
+  size_t sz = f.size();
+  uint8_t* jpg = (uint8_t*)ps_malloc(sz);
+  if(!jpg) { f.close(); return false; }
+  f.read(jpg, sz);
+  f.close();
+  
+  uint8_t* rgb = (uint8_t*)ps_malloc(240*240*3);
+  if(!rgb) { free(jpg); return false; }
+  
+  bool ok = fmt2rgb888(jpg, sz, PIXFORMAT_JPEG, rgb);
+  free(jpg);
+  if(!ok) { free(rgb); return false; }
+  
+  for(int y=0; y<64; y++) {
+    for(int x=0; x<64; x++) {
+      int sy = (int)((y+0.5)*240.0/64.0);
+      int sx = (int)((x+0.5)*240.0/64.0);
+      if(sy>239) sy=239;
+      if(sx>239) sx=239;
+      int srcIdx = (sy*240 + sx)*3;
+      int dstIdx = (y*64 + x)*3;
+      buf[dstIdx] = rgb[srcIdx]/255.0f;
+      buf[dstIdx+1] = rgb[srcIdx+1]/255.0f;
+      buf[dstIdx+2] = rgb[srcIdx+2]/255.0f;
+    }
+  }
+  
+  free(rgb);
+  return true;
+}
+
+void myForwardPass(float* input, float* logits) {
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ob = f*3844;
+    for(int y=0; y<62; y++) {
+      for(int x=0; x<62; x++) {
+        float sum = 0;
+        for(int ky=0; ky<3; ky++) {
+          for(int kx=0; kx<3; kx++) {
+            int inPos = ((y+ky)*64+(x+kx))*3;
+            int wPos = f*27 + ky*9 + kx*3;
+            sum += input[inPos]*myConv1_w[wPos] + 
+                   input[inPos+1]*myConv1_w[wPos+1] + 
+                   input[inPos+2]*myConv1_w[wPos+2];
+          }
+        }
+        myConv1_output[ob + y*62 + x] = leaky_relu(clip_value(sum + myConv1_b[f]));
+      }
+    }
+  }
+  
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ib=f*3844, ob=f*961;
+    for(int y=0; y<POOL1_SIZE; y++) {
+      for(int x=0; x<POOL1_SIZE; x++) {
+        int iy=y*2, ix=x*2;
+        float maxVal = myConv1_output[ib + iy*62 + ix];
+        maxVal = max(maxVal, myConv1_output[ib + iy*62 + ix+1]);
+        maxVal = max(maxVal, myConv1_output[ib + (iy+1)*62 + ix]);
+        maxVal = max(maxVal, myConv1_output[ib + (iy+1)*62 + ix+1]);
+        myPool1_output[ob + y*POOL1_SIZE + x] = maxVal;
+      }
+    }
+  }
+  
+  for(int f=0; f<CONV2_FILTERS; f++) {
+    int ob=f*841;
+    for(int y=0; y<CONV2_OUTPUT_SIZE; y++) {
+      for(int x=0; x<CONV2_OUTPUT_SIZE; x++) {
+        float sum = 0;
+        for(int c=0; c<CONV1_FILTERS; c++) {
+          int ib=c*961;
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              sum += myPool1_output[ib + (y+ky)*POOL1_SIZE + (x+kx)] * 
+                     myConv2_w[f*36 + c*9 + ky*3 + kx];
+            }
+          }
+        }
+        myConv2_output[ob + y*CONV2_OUTPUT_SIZE + x] = leaky_relu(clip_value(sum + myConv2_b[f]));
+      }
+    }
+  }
+  
+  for(int c=0; c<NUM_CLASSES; c++) {
+    double sum = 0, comp = 0;
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      double term = myConv2_output[i] * myOutput_w[c*FLATTENED_SIZE + i];
+      double y = term - comp;
+      double t = sum + y;
+      comp = (t - sum) - y;
+      sum = t;
+    }
+    myDense_output[c] = clip_value((float)sum + myOutput_b[c], -50, 50);
+  }
+  
+  float mx = max(max(myDense_output[0], myDense_output[1]), myDense_output[2]);
+  float expSum = exp(myDense_output[0]-mx) + exp(myDense_output[1]-mx) + exp(myDense_output[2]-mx);
+  for(int i=0; i<NUM_CLASSES; i++) {
+    logits[i] = myDense_output[i];
+    myDense_output[i] = exp(myDense_output[i]-mx) / expSum;
+  }
+}
+
+void myBackwardDense(int label) {
+  for(int c=0; c<NUM_CLASSES; c++) {
+    float error = myDense_output[c] - (c==label ? 1.0f : 0.0f);
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      myOutput_w_grad[c*FLATTENED_SIZE+i] = error * myConv2_output[i];
+      myDense_grad[i] = (c==0) ? error*myOutput_w[c*FLATTENED_SIZE+i] : 
+                                 myDense_grad[i] + error*myOutput_w[c*FLATTENED_SIZE+i];
+    }
+    myOutput_b_grad[c] = error;
+  }
+}
+
+void myBackwardConv2() {
+  for(int i=0; i<FLATTENED_SIZE; i++) {
+    myConv2_grad[i] = myDense_grad[i] * leaky_relu_deriv(myConv2_output[i]);
+  }
+  
+  memset(myConv2_w_grad, 0, CONV2_WEIGHTS*sizeof(float));
+  memset(myConv2_b_grad, 0, CONV2_FILTERS*sizeof(float));
+  memset(myPool1_grad, 0, 31*31*CONV1_FILTERS*sizeof(float));
+  
+  for(int f=0; f<CONV2_FILTERS; f++) {
+    int ob=f*841;
+    for(int y=0; y<CONV2_OUTPUT_SIZE; y++) {
+      for(int x=0; x<CONV2_OUTPUT_SIZE; x++) {
+        float grad = myConv2_grad[ob+y*CONV2_OUTPUT_SIZE+x];
+        myConv2_b_grad[f] += grad;
+        for(int c=0; c<CONV1_FILTERS; c++) {
+          int ib=c*961;
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              int pi = ib+(y+ky)*POOL1_SIZE+(x+kx);
+              int wi = f*36+c*9+ky*3+kx;
+              myConv2_w_grad[wi] += grad * myPool1_output[pi];
+              myPool1_grad[pi] += grad * myConv2_w[wi];
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void myBackwardPool1() {
+  memset(myConv1_grad, 0, 62*62*CONV1_FILTERS*sizeof(float));
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ib=f*3844, ob=f*961;
+    for(int y=0; y<POOL1_SIZE; y++) {
+      for(int x=0; x<POOL1_SIZE; x++) {
+        int iy=y*2, ix=x*2;
+        float poolVal = myPool1_output[ob+y*POOL1_SIZE+x];
+        float grad = myPool1_grad[ob+y*POOL1_SIZE+x];
+        if(myConv1_output[ib+iy*62+ix] == poolVal) myConv1_grad[ib+iy*62+ix] += grad;
+        if(myConv1_output[ib+iy*62+ix+1] == poolVal) myConv1_grad[ib+iy*62+ix+1] += grad;
+        if(myConv1_output[ib+(iy+1)*62+ix] == poolVal) myConv1_grad[ib+(iy+1)*62+ix] += grad;
+        if(myConv1_output[ib+(iy+1)*62+ix+1] == poolVal) myConv1_grad[ib+(iy+1)*62+ix+1] += grad;
+      }
+    }
+  }
+}
+
+void myBackwardConv1() {
+  for(int i=0; i<62*62*CONV1_FILTERS; i++) {
+    myConv1_grad[i] *= leaky_relu_deriv(myConv1_output[i]);
+  }
+  
+  memset(myConv1_w_grad, 0, CONV1_WEIGHTS*sizeof(float));
+  memset(myConv1_b_grad, 0, CONV1_FILTERS*sizeof(float));
+  
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ob=f*3844;
+    for(int y=0; y<62; y++) {
+      for(int x=0; x<62; x++) {
+        float grad = myConv1_grad[ob+y*62+x];
+        myConv1_b_grad[f
