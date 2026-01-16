@@ -142,9 +142,14 @@ It's a process!
 
 
 
+## For training   
+You can print it
 
 
 
+
+
+<img width="233" height="245" alt="circle-square" src="https://github.com/user-attachments/assets/a99354ff-bd4e-42fc-9e1a-9a7e21578d4d" />
 
 
 
