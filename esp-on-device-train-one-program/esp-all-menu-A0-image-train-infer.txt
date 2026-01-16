@@ -50,12 +50,12 @@ U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE);
 // CONFIGURATION & ML HYPERPARAMETERS
 // ======================================================
 const int myTotalItems = 5;      
-const int myThresholdPress = 1100;    // Touch detected threshold
-const int myThresholdRelease = 900;   // Touch release threshold (hysteresis)
-const int myLongPressTime = 900;      // Increased from 450ms for clearer distinction
+const int myThresholdPress = 1100;
+const int myThresholdRelease = 900;
+const int myLongPressTime = 900;
 const unsigned long myScreenTimeout = 300000; 
 
-String myClassLabels[3] = {"0Background", "1CellPhone", "2Face"};
+String myClassLabels[3] = {"0blank", "1pen", "2cellPhone"};
 
 float LEARNING_RATE = 0.0003;
 int BATCH_SIZE = 12;
@@ -64,6 +64,8 @@ int TARGET_EPOCHS = 10;
 // SYSTEM LOGIC VARIABLES
 unsigned long myTouchStart = 0;
 unsigned long myLastActivityTime = 0; 
+unsigned long myLastTapTime = 0;
+const int myTapCooldown = 250;
 bool myIsTouching = false;
 bool myLongPressTriggered = false; 
 int myMenuIndex = 1;
@@ -136,12 +138,6 @@ std::vector<TrainingItem> myTrainingData;
 #define HREF_GPIO_NUM     47
 #define PCLK_GPIO_NUM     13
 
-/* * ======================================================
- * TOUCH INPUT UTILITIES
- * ======================================================
- */
-
-// Utility functions
 inline float clip_value(float v, float mn=-100, float mx=100) {
   if(isnan(v)||isinf(v)) return 0;
   return constrain(v,mn,mx);
@@ -150,7 +146,6 @@ inline float clip_value(float v, float mn=-100, float mx=100) {
 inline float leaky_relu(float x) { return x>0 ? x : 0.1f*x; }
 inline float leaky_relu_deriv(float x) { return x>0 ? 1.0f : 0.1f; }
 
-// Multi-sample averaging to reduce noise on capacitive touch
 int myReadTouch() {
   int sum = 0;
   for(int i=0; i<3; i++) {
@@ -160,7 +155,6 @@ int myReadTouch() {
   return sum / 3;
 }
 
-// Complete state reset when exiting menu actions
 void myResetMenuState() {
   myIsSelected = false;
   myIsTouching = false;
@@ -168,17 +162,114 @@ void myResetMenuState() {
   myLastActivityTime = millis();
 }
 
-/* * ======================================================
- * ML UTILITIES (Memory, Loading, Saving, Exporting)
- * ======================================================
- */
+void myDisplayImageOnOLED(camera_fb_t* fb, int imageCount) {
+  size_t myRgbBufferSize = fb->width * fb->height * 3;
+  uint8_t* myRgbBuffer = (uint8_t*)ps_malloc(myRgbBufferSize);
+  
+  if (myRgbBuffer == NULL) {
+    Serial.println("Failed to allocate RGB buffer for OLED preview");
+    return;
+  }
+  
+  bool conversionSuccess = fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer);
+  
+  if (!conversionSuccess) {
+    free(myRgbBuffer);
+    Serial.println("Failed to convert JPEG to RGB888 for OLED");
+    return;
+  }
+  
+  int myOledWidth = u8g2.getDisplayWidth();
+  int myOledHeight = u8g2.getDisplayHeight();
+  int myImageWidth = fb->width;
+  int myImageHeight = fb->height;
+  int myScaleX = myImageWidth / myOledWidth;
+  int myScaleY = myImageHeight / myOledHeight;
+  
+  u8g2.firstPage();
+  do {
+    for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
+      for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
+        int myImageX = myOledX * myScaleX;
+        int myImageY = myOledY * myScaleY;
+        size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
+        
+        if (myPixelIndex + 2 < myRgbBufferSize) {
+          uint8_t myRed = myRgbBuffer[myPixelIndex];
+          uint8_t myGreen = myRgbBuffer[myPixelIndex + 1];
+          uint8_t myBlue = myRgbBuffer[myPixelIndex + 2];
+          uint8_t myBrightness = (myRed + myGreen + myBlue) / 3;
+          
+          if (myBrightness > 100) {
+            u8g2.drawPixel(myOledX, myOledY);
+          }
+        }
+      }
+    }
+    
+    u8g2.setFont(u8g2_font_ncenB10_tr);
+    u8g2.setColorIndex(0);
+    u8g2.drawBox(0, 0, 20, 15);
+    u8g2.setColorIndex(1);
+    u8g2.setCursor(3, 10);
+    u8g2.print(String(imageCount));
+    
+  } while (u8g2.nextPage());
+  
+  free(myRgbBuffer);
+}
+
+void myDisplayLiveCameraPreview() {
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) return;
+  
+  size_t myRgbBufferSize = fb->width * fb->height * 3;
+  uint8_t* myRgbBuffer = (uint8_t*)ps_malloc(myRgbBufferSize);
+  
+  if (myRgbBuffer && fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer)) {
+    int myOledWidth = u8g2.getDisplayWidth();
+    int myOledHeight = u8g2.getDisplayHeight();
+    int myImageWidth = fb->width;
+    int myImageHeight = fb->height;
+    int myScaleX = myImageWidth / myOledWidth;
+    int myScaleY = myImageHeight / myOledHeight;
+    
+    u8g2.firstPage();
+    do {
+      for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
+        for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
+          int myImageX = myOledX * myScaleX;
+          int myImageY = myOledY * myScaleY;
+          size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
+          
+          if (myPixelIndex + 2 < myRgbBufferSize) {
+            uint8_t myBrightness = (myRgbBuffer[myPixelIndex] + 
+                                    myRgbBuffer[myPixelIndex + 1] + 
+                                    myRgbBuffer[myPixelIndex + 2]) / 3;
+            if (myBrightness > 100) {
+              u8g2.drawPixel(myOledX, myOledY);
+            }
+          }
+        }
+      }
+      u8g2.setFont(u8g2_font_5x7_tf);
+      u8g2.setColorIndex(0);
+      u8g2.drawBox(50, 0, 22, 8);
+      u8g2.setColorIndex(1);
+      u8g2.drawStr(52, 7, "LIVE");
+    } while (u8g2.nextPage());
+    
+    free(myRgbBuffer);
+  }
+  
+  esp_camera_fb_return(fb);
+}
 
 void myAllocateMemory() {
   if (myInputBuffer != nullptr) return;
   
   Serial.println("\n=== Allocating Memory ===");
   
-  // Weight buffers
   myInputBuffer = (float*)ps_malloc(64 * 64 * 3 * sizeof(float));
   myConv1_w = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
   myConv1_b = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
@@ -187,7 +278,6 @@ void myAllocateMemory() {
   myOutput_w = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
   myOutput_b = (float*)ps_malloc(NUM_CLASSES * sizeof(float));
 
-  // Gradient buffers
   myConv1_w_grad = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
   myConv1_b_grad = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
   myConv2_w_grad = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
@@ -195,7 +285,6 @@ void myAllocateMemory() {
   myOutput_w_grad = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
   myOutput_b_grad = (float*)ps_malloc(NUM_CLASSES * sizeof(float));
 
-  // Adam optimizer buffers
   myConv1_w_m = (float*)ps_calloc(CONV1_WEIGHTS, sizeof(float));
   myConv1_w_v = (float*)ps_calloc(CONV1_WEIGHTS, sizeof(float));
   myConv1_b_m = (float*)ps_calloc(CONV1_FILTERS, sizeof(float));
@@ -209,19 +298,16 @@ void myAllocateMemory() {
   myOutput_b_m = (float*)ps_calloc(NUM_CLASSES, sizeof(float));
   myOutput_b_v = (float*)ps_calloc(NUM_CLASSES, sizeof(float));
 
-  // Forward pass buffers
   myConv1_output = (float*)ps_malloc(62*62*CONV1_FILTERS*sizeof(float));
   myPool1_output = (float*)ps_malloc(31*31*CONV1_FILTERS*sizeof(float));
   myConv2_output = (float*)ps_malloc(29*29*CONV2_FILTERS*sizeof(float));
   myDense_output = (float*)ps_malloc(NUM_CLASSES*sizeof(float));
 
-  // Backward pass buffers
   myDense_grad = (float*)ps_malloc(FLATTENED_SIZE*sizeof(float));
   myConv2_grad = (float*)ps_malloc(29*29*CONV2_FILTERS*sizeof(float));
   myPool1_grad = (float*)ps_malloc(31*31*CONV1_FILTERS*sizeof(float));
   myConv1_grad = (float*)ps_malloc(62*62*CONV1_FILTERS*sizeof(float));
 
-  // Verify PSRAM allocation succeeded
   if (!myInputBuffer || !myConv1_w || !myConv2_w || !myOutput_w || 
       !myConv1_output || !myPool1_output || !myConv2_output) {
     Serial.println("FATAL: PSRAM allocation failed!");
@@ -232,16 +318,15 @@ void myAllocateMemory() {
 
   Serial.printf("Free PSRAM after allocation: %d bytes\n", ESP.getFreePsram());
 
-  // Default random initialization (fallback if no file exists)
-  float c1std = sqrt(2.0/(9.0*3)); // He initialization for Conv1
+  float c1std = sqrt(2.0/(9.0*3));
   for(int i=0; i<CONV1_WEIGHTS; i++) myConv1_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * c1std;
   for(int i=0; i<CONV1_FILTERS; i++) myConv1_b[i] = 0;
   
-  float c2std = sqrt(2.0/36.0); // He initialization for Conv2
+  float c2std = sqrt(2.0/36.0);
   for(int i=0; i<CONV2_WEIGHTS; i++) myConv2_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * c2std;
   for(int i=0; i<CONV2_FILTERS; i++) myConv2_b[i] = 0;
   
-  float dstd = sqrt(2.0/FLATTENED_SIZE); // He initialization for Dense
+  float dstd = sqrt(2.0/FLATTENED_SIZE);
   for(int i=0; i<OUTPUT_WEIGHTS; i++) myOutput_w[i] = ((float)rand()/RAND_MAX - 0.5f) * 2.0f * dstd;
   for(int i=0; i<NUM_CLASSES; i++) myOutput_b[i] = 0;
 }
@@ -306,12 +391,6 @@ void mySaveWeights() {
   myExportHeader();
 }
 
-/* * ======================================================
- * CNN INFERENCE - Forward Pass Implementation
- * ======================================================
- */
-
-// Load and preprocess image from SD card
 bool myLoadImageFromFile(const char* path, float* buf) {
   File f = SD.open(path);
   if(!f) return false;
@@ -329,7 +408,6 @@ bool myLoadImageFromFile(const char* path, float* buf) {
   free(jpg);
   if(!ok) { free(rgb); return false; }
   
-  // Resize 240x240 to 64x64 and normalize
   for(int y=0; y<64; y++) {
     for(int x=0; x<64; x++) {
       int sy = (int)((y+0.5)*240.0/64.0);
@@ -349,7 +427,6 @@ bool myLoadImageFromFile(const char* path, float* buf) {
 }
 
 void myForwardPass(float* input, float* logits) {
-  // Conv1: 64x64x3 -> 62x62x4 (3x3 convolution, 4 filters)
   for(int f=0; f<CONV1_FILTERS; f++) {
     int ob = f*3844;
     for(int y=0; y<62; y++) {
@@ -369,7 +446,6 @@ void myForwardPass(float* input, float* logits) {
     }
   }
   
-  // Pool1: 62x62x4 -> 31x31x4 (2x2 max pooling)
   for(int f=0; f<CONV1_FILTERS; f++) {
     int ib=f*3844, ob=f*961;
     for(int y=0; y<POOL1_SIZE; y++) {
@@ -384,7 +460,6 @@ void myForwardPass(float* input, float* logits) {
     }
   }
   
-  // Conv2: 31x31x4 -> 29x29x8 (3x3 convolution, 8 filters)
   for(int f=0; f<CONV2_FILTERS; f++) {
     int ob=f*841;
     for(int y=0; y<CONV2_OUTPUT_SIZE; y++) {
@@ -404,9 +479,8 @@ void myForwardPass(float* input, float* logits) {
     }
   }
   
-  // Dense: flatten 29x29x8=6728 -> 3 classes
   for(int c=0; c<NUM_CLASSES; c++) {
-    double sum = 0, comp = 0; // Kahan summation for numerical stability
+    double sum = 0, comp = 0;
     for(int i=0; i<FLATTENED_SIZE; i++) {
       double term = myConv2_output[i] * myOutput_w[c*FLATTENED_SIZE + i];
       double y = term - comp;
@@ -417,7 +491,6 @@ void myForwardPass(float* input, float* logits) {
     myDense_output[c] = clip_value((float)sum + myOutput_b[c], -50, 50);
   }
   
-  // Softmax
   float mx = max(max(myDense_output[0], myDense_output[1]), myDense_output[2]);
   float expSum = exp(myDense_output[0]-mx) + exp(myDense_output[1]-mx) + exp(myDense_output[2]-mx);
   for(int i=0; i<NUM_CLASSES; i++) {
@@ -425,11 +498,6 @@ void myForwardPass(float* input, float* logits) {
     myDense_output[i] = exp(myDense_output[i]-mx) / expSum;
   }
 }
-
-/* * ======================================================
- * CNN BACKPROPAGATION - Gradient Calculation
- * ======================================================
- */
 
 void myBackwardDense(int label) {
   for(int c=0; c<NUM_CLASSES; c++) {
@@ -521,11 +589,6 @@ void myBackwardConv1() {
   }
 }
 
-/* * ======================================================
- * ADAM OPTIMIZER - Weight Updates
- * ======================================================
- */
-
 void myAdamUpdate(float* w, float* g, float* m, float* v, int size, int step) {
   float b1=0.9, b2=0.999, eps=1e-8;
   float lr_t = LEARNING_RATE * sqrt(1-pow(b2,step)) / (1-pow(b1,step));
@@ -546,18 +609,14 @@ void myUpdateWeights(int step) {
   myAdamUpdate(myOutput_b, myOutput_b_grad, myOutput_b_m, myOutput_b_v, NUM_CLASSES, step);
 }
 
-/* * ======================================================
- * MENU ACTIONS
- * ======================================================
- */
-
 void myActionCollect(int classIdx) {
   Serial.printf("\n>>> Entering collection mode for class: %s\n", myClassLabels[classIdx].c_str());
+  Serial.println("Send 't' for tap (capture), 'l' for long-press (exit)");
+  
   String path = "/images/" + myClassLabels[classIdx];
   if (!SD.exists("/images")) SD.mkdir("/images");
   if (!SD.exists(path)) SD.mkdir(path);
 
-  // Count existing images in each class
   int counts[3] = {0, 0, 0};
   for(int i=0; i<3; i++) {
     File root = SD.open("/images/" + myClassLabels[i]);
@@ -572,20 +631,30 @@ void myActionCollect(int classIdx) {
     }
   }
 
-  u8g2.firstPage();
-  do {
-    u8g2.setFont(u8g2_font_6x10_tf);
-    u8g2.drawStr(0, 10, (": " + myClassLabels[classIdx]).c_str());
-    u8g2.setCursor(0, 22);
-    u8g2.print("Imgs: ");
-    u8g2.print(counts[0]); u8g2.print(",");
-    u8g2.print(counts[1]); u8g2.print(",");
-    u8g2.print(counts[2]);
-    u8g2.drawStr(0, 34, "TAP:Snap HOLD:Exit");
-  } while (u8g2.nextPage());
+  unsigned long lastPreview = 0;
 
   while (true) {
-    if (myReadTouch() > myThresholdPress) {
+    bool shouldCapture = false;
+    
+    if (millis() - lastPreview > 100) {
+      myDisplayLiveCameraPreview();
+      lastPreview = millis();
+    }
+    
+    if (Serial.available()) {
+      char c = Serial.read();
+      if (c == 'l' || c == 'L') {
+        Serial.println("Exit command received");
+        myResetMenuState();
+        delay(200);
+        return;
+      } else if (c == 't' || c == 'T') {
+        Serial.println("Tap command received - capturing image");
+        shouldCapture = true;
+      }
+    }
+    
+    if (!shouldCapture && myReadTouch() > myThresholdPress) {
       unsigned long start = millis();
       while (myReadTouch() > myThresholdPress) {
         if (millis() - start > myLongPressTime) {
@@ -594,8 +663,10 @@ void myActionCollect(int classIdx) {
           return;
         }
       }
-      
-      // Short press - capture image
+      shouldCapture = true;
+    }
+    
+    if (shouldCapture) {
       camera_fb_t * fb = esp_camera_fb_get();
       if (fb) {
         String fileName = path + "/img_" + String(millis()) + ".jpg";
@@ -605,15 +676,16 @@ void myActionCollect(int classIdx) {
           file.close();
           
           if (written == fb->len) {
-            u8g2.firstPage();
-            do { u8g2.drawStr(0, 30, "Saved!"); } while (u8g2.nextPage());
-            Serial.printf("Saved: %s\n", fileName.c_str());
+            counts[classIdx]++;
+            Serial.printf("Saved: %s (Total: %d)\n", fileName.c_str(), counts[classIdx]);
+            myDisplayImageOnOLED(fb, counts[classIdx]);
+            delay(500);
           } else {
             u8g2.firstPage();
             do { u8g2.drawStr(0, 30, "Write Error!"); } while (u8g2.nextPage());
             Serial.println("File write error");
+            delay(200);
           }
-          delay(200);
         } else {
           Serial.println("Failed to open file");
         }
@@ -626,8 +698,8 @@ void myActionCollect(int classIdx) {
 
 void myActionTrain() {
   Serial.println("\n>>> Starting training mode");
+  Serial.println("Send 'l' for long-press (exit training)");
 
-  // Display training start message
   u8g2.firstPage();
   do {
     u8g2.setFont(u8g2_font_6x10_tf);
@@ -635,9 +707,8 @@ void myActionTrain() {
     u8g2.drawStr(0, 24, "Loading images...");
     u8g2.drawStr(0, 36, "HOLD A0 to exit");
   } while (u8g2.nextPage());
-  delay(1500);  // Show message for 1.5 seconds
+  delay(1500);
   
-  // Try to load existing weights first, otherwise init randomly
   if (myLoadWeights()) {
     Serial.println("Existing weights loaded from SD for continuous training.");
   } else {
@@ -678,7 +749,6 @@ void myActionTrain() {
     Serial.printf("Training with %d images (%d batches per epoch)\n", total, batchesPerEpoch);
     Serial.println("\n--- Starting Training ---");
     
-    // Shuffle indices
     std::vector<int> indices;
     for(int i=0; i<total; i++) indices.push_back(i);
     
@@ -686,7 +756,16 @@ void myActionTrain() {
     int lossCount = 0;
     
     for(int batch=0; batch<totalBatches; batch++) {
-      // Shuffle at start of each epoch
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 'l' || c == 'L') {
+          Serial.println("Exit training command received");
+          myResetMenuState();
+          delay(200);
+          return;
+        }
+      }
+      
       if(batch % batchesPerEpoch == 0) {
         int epoch = batch/batchesPerEpoch + 1;
         Serial.printf("\n--- Epoch %d/%d ---\n", epoch, TARGET_EPOCHS);
@@ -704,37 +783,30 @@ void myActionTrain() {
       float batchLoss = 0;
       int correctCount = 0;
       
-      // Process each image in the batch
       for(int i=batchStart; i<batchEnd; i++) {
         int idx = indices[i];
         TrainingItem& img = myTrainingData[idx];
         
-        // Load image
         if(!myLoadImageFromFile(img.path.c_str(), myInputBuffer)) {
           continue;
         }
         
-        // Forward pass
         float logits[3];
         myForwardPass(myInputBuffer, logits);
         
-        // Calculate loss (cross-entropy)
         float loss = -log(max(myDense_output[img.label], 1e-7f));
         batchLoss += loss;
         
-        // Check if prediction is correct
         int pred = 0;
         for(int j=1; j<3; j++) if(myDense_output[j] > myDense_output[pred]) pred = j;
         if(pred == img.label) correctCount++;
         
-        // Backward pass
         myBackwardDense(img.label);
         myBackwardConv2();
         myBackwardPool1();
         myBackwardConv1();
       }
       
-      // Update weights after batch
       myUpdateWeights(batch+1);
       
       float avgLoss = batchLoss / (batchEnd - batchStart);
@@ -742,7 +814,6 @@ void myActionTrain() {
       runningLoss += avgLoss;
       lossCount++;
       
-      // Update OLED every 5 batches
       if((batch+1) % 5 == 0) {
         float displayLoss = runningLoss / lossCount;
         u8g2.firstPage();
@@ -760,7 +831,6 @@ void myActionTrain() {
         lossCount = 0;
       }
       
-      // Print progress every 10 batches
       if((batch+1) % 10 == 0) {
         Serial.printf("Batch %d/%d - Loss: %.4f - Acc: %.1f%%\n", 
                      batch+1, totalBatches, avgLoss, batchAcc*100);
@@ -776,8 +846,20 @@ void myActionTrain() {
       u8g2.drawStr(0, 30, "TAP:Again HOLD:Exit");
     } while (u8g2.nextPage());
 
-    // Wait for interaction
     while (true) {
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 'l' || c == 'L') {
+          Serial.println("Exit command received");
+          myResetMenuState();
+          delay(200);
+          return;
+        } else if (c == 't' || c == 'T') {
+          Serial.println("Tap command received - starting new training cycle");
+          break;
+        }
+      }
+      
       if (myReadTouch() > myThresholdPress) {
         unsigned long start = millis();
         while (myReadTouch() > myThresholdPress) {
@@ -796,6 +878,7 @@ void myActionTrain() {
 
 void myActionInfer() {
   Serial.println("\n>>> Starting inference mode");
+  Serial.println("Send 'l' for long-press (exit)");
   
   if (!myLoadWeights()) {
     u8g2.firstPage();
@@ -806,12 +889,20 @@ void myActionInfer() {
   }
   
   while (true) {
+    if (Serial.available()) {
+      char c = Serial.read();
+      if (c == 'l' || c == 'L') {
+        Serial.println("Exit inference command received");
+        myResetMenuState();
+        delay(200);
+        return;
+      }
+    }
+    
     camera_fb_t * fb = esp_camera_fb_get();
     if (fb) {
-      // Convert JPEG to RGB and resize to 64x64
       uint8_t* rgb = (uint8_t*)ps_malloc(240*240*3);
       if (rgb && fmt2rgb888(fb->buf, fb->len, PIXFORMAT_JPEG, rgb)) {
-        // Resize 240x240 -> 64x64 and normalize to [0,1]
         for(int y=0; y<64; y++) {
           for(int x=0; x<64; x++) {
             int sy = (int)((y+0.5)*240.0/64.0);
@@ -827,11 +918,9 @@ void myActionInfer() {
         }
         free(rgb);
         
-        // Run inference
         float myLogits[3];
         myForwardPass(myInputBuffer, myLogits);
         
-        // myDense_output now contains softmax probabilities from forward pass
         int pred = 0;
         for(int i=1; i<3; i++) if(myDense_output[i] > myDense_output[pred]) pred = i;
 
@@ -868,11 +957,6 @@ void myActionInfer() {
     delay(10);
   }
 }
-
-/* * ======================================================
- * CORE SYSTEM & TOUCH LOGIC
- * ======================================================
- */
 
 void setup() {
   Serial.begin(115200);
@@ -911,14 +995,63 @@ void setup() {
   Serial.println("Camera initialized");
   
   myLastActivityTime = millis();
-  Serial.println("System ready - use touch to navigate menu");
+  
+  Serial.println("\n=== MENU ===");
+  for(int i=1; i<=myTotalItems; i++) {
+    String label = (i <= 3) ? myClassLabels[i-1] : (i == 4 ? "Train" : "Infer");
+    Serial.printf("%d. %s\n", i, label.c_str());
+  }
+  Serial.println("Commands: 1-5=jump, t=next, l=select, m=menu");
+  Serial.println("System ready - use touch or serial commands to navigate");
 }
 
 void loop() {
   unsigned long myCurrentMillis = millis();
+  
+  if (!myIsSelected && Serial.available()) {
+    char c = Serial.read();
+    
+    if (c >= '1' && c <= '5') {
+      int newIndex = c - '0';
+      if (newIndex <= myTotalItems) {
+        myMenuIndex = newIndex;
+        String label = (myMenuIndex <= 3) ? myClassLabels[myMenuIndex-1] : (myMenuIndex == 4 ? "Train" : "Infer");
+        Serial.printf("Menu jumped to: %d - %s\n", myMenuIndex, label.c_str());
+        myLastActivityTime = myCurrentMillis;
+      }
+    }
+    else if (c == 't' || c == 'T') {
+      if (myCurrentMillis - myLastTapTime > myTapCooldown) {
+        myMenuIndex++;
+        if (myMenuIndex > myTotalItems) myMenuIndex = 1;
+        String label = (myMenuIndex <= 3) ? myClassLabels[myMenuIndex-1] : (myMenuIndex == 4 ? "Train" : "Infer");
+        Serial.printf("Menu: %d - %s\n", myMenuIndex, label.c_str());
+        myLastTapTime = myCurrentMillis;
+        myLastActivityTime = myCurrentMillis;
+      }
+    } 
+    else if (c == 'l' || c == 'L') {
+      Serial.println("Long-press command - selecting menu item");
+      myIsSelected = true;
+      myLastActivityTime = myCurrentMillis;
+      
+      if (myMenuIndex == 1) myActionCollect(0);
+      else if (myMenuIndex == 2) myActionCollect(1);
+      else if (myMenuIndex == 3) myActionCollect(2);
+      else if (myMenuIndex == 4) myActionTrain();
+      else if (myMenuIndex == 5) myActionInfer();
+    }
+    else if (c == 'm' || c == 'M') {
+      Serial.println("\n=== MENU ===");
+      for(int i=1; i<=myTotalItems; i++) {
+        String label = (i <= 3) ? myClassLabels[i-1] : (i == 4 ? "Train" : "Infer");
+        Serial.printf("%d. %s %s\n", i, label.c_str(), i == myMenuIndex ? "<--" : "");
+      }
+      Serial.println("Commands: 1-5=jump, t=next, l=select, m=menu");
+    }
+  }
+  
   int val = myReadTouch();
-
-  // Hysteresis: use different thresholds for press vs release
   bool touchActive = myIsTouching ? (val > myThresholdRelease) : (val > myThresholdPress);
 
   if (touchActive) {
@@ -946,15 +1079,16 @@ void loop() {
   else {
     if (myIsTouching) {
       if (!myLongPressTriggered && (myCurrentMillis - myTouchStart < myLongPressTime)) {
-        if (!myIsSelected) {
+        if (!myIsSelected && (myCurrentMillis - myLastTapTime > myTapCooldown)) {
           myMenuIndex++;
           if (myMenuIndex > myTotalItems) myMenuIndex = 1;
           Serial.printf("Menu: %d\n", myMenuIndex);
+          myLastTapTime = myCurrentMillis;
         }
       }
       myIsTouching = false;
       myLongPressTriggered = false;
-      delay(200); 
+      delay(50); 
     }
   }
 
@@ -977,3 +1111,4 @@ void loop() {
     } while (u8g2.nextPage());
   }
 }
+
