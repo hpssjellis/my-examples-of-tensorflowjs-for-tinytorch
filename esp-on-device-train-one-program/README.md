@@ -1,6 +1,14 @@
 Trying to take images, train and infer all with an A0 activated fast and slow press menu
 
 
+Best most stable always at 
+
+[esp-all-menu-A0-image-train-infer.txt](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/esp-on-device-train-one-program/esp-all-menu-A0-image-train-infer.txt)
+
+
+Latest testing [esp-all-menu-A0-image-train-infer27-zero-to-4-parts.txt](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/esp-on-device-train-one-program/esp-all-menu-A0-image-train-infer27-zero-to-4-parts.txt)
+
+
 
 
 Notes by Gemini after version 25
