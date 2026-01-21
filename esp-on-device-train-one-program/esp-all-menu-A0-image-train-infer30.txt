@@ -13,8 +13,15 @@
 // Github Profile https://github.com/hpssjellis
 // LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
 //
-// For platformio you need the library decalred in the platformio.ini file
+// For platformio you need theU8g2 library decalred in the platformio.ini file and OPI PSRAM set
 //    lib_deps =  olikraus/U8g2 @ ^2.35.30
+//    ; Overriding defaults to enable OPI PSRAM
+//    build_flags = 
+          -DBOARD_HAS_PSRAM
+          -DARDUINO_USB_CDC_ON_BOOT=1
+//   board_build.arduino.memory_type = qio_opi
+//   board_build.flash_mode = qio
+//   board_upload.flash_size = 8MB
 //
 // ======================================================
 // STANDALONE TESTING:
