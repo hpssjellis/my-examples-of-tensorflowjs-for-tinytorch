@@ -1238,7 +1238,7 @@ void myDrawMenu() {
 
     Serial.printf("%d. %s\n", i, label.c_str());
   }
-  Serial.println("Commands: t=next  l=select  m=menu");
+  Serial.println("Commands: t=next  l=select");
 
   // ===== OLED MENU =====
   u8g2.firstPage();
