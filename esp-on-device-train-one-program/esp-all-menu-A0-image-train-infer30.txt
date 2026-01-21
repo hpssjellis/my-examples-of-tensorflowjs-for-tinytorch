@@ -2,7 +2,7 @@
 // ======================================================
 // XIAO ML KIT (OR XIAO ESP32S3 SENSE)
 // FULL VISION ML 
-// Image collection, training, inference
+// Small Image collection, training, inference for education and proof of concept
 //
 // SD card stores: images in class folders
 // SD card stores: headers in bin and .h text char array format
