@@ -220,6 +220,14 @@ int myReadTouch() {
   return sum / 3;
 }
 
+void myResetTouchState() {
+  myTouch.isTouching = false;
+  myTouch.tapCount = 0;
+  myTouch.firstTapTime = 0;
+  myTouch.lastReleaseTime = 0;
+  myTouch.lastCheckTime = 0;
+}
+
 // NEW: Background touch monitor that can be called less frequently
 void myUpdateTouchState() {
   unsigned long now = millis();
@@ -308,13 +316,7 @@ int myPeekTouchAction() {
   return 0;
 }
 
-void myResetTouchState() {
-  myTouch.isTouching = false;
-  myTouch.tapCount = 0;
-  myTouch.firstTapTime = 0;
-  myTouch.lastReleaseTime = 0;
-  myTouch.lastCheckTime = 0;
-}
+
 
 
 // ======================================================
