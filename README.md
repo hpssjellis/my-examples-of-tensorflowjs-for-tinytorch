@@ -164,8 +164,8 @@ You can print it
 
 
 
-The link QR code to: <br><a href="https://opencollective.com/mlsysbook">https://opencollective.com/mlsysbook<br>
-<img width="318" height="402" alt="image" src="https://github.com/user-attachments/assets/d096f8d2-7571-4f41-8c80-71a968a095d2"</a>
+The link QR code to: <br><a href="https://opencollective.com/mlsysbook">https://opencollective.com/mlsysbook</a><br>
+<img width="318" height="402" alt="image" src="https://github.com/user-attachments/assets/d096f8d2-7571-4f41-8c80-71a968a095d2"
 
 
 
