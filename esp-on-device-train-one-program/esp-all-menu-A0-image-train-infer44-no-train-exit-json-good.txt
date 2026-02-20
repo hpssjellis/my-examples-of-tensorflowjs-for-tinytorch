@@ -1,0 +1,1818 @@
+// ======================================================
+// XIAO ML KIT (OR XIAO ESP32S3 SENSE)
+// FULL VISION ML 
+// Small Image collection, training, inference for education and proof of concept
+//
+// SD card stores: images in class folders
+// SD card stores: headers in bin and .h text char array format
+// Serial monitor and OLED output
+// By jeremy Ellis
+// Use at your own risk!
+// MIT license
+// Github Profile https://github.com/hpssjellis
+// LinkedIn https://www.linkedin.com/in/jeremy-ellis-4237a9bb/
+//
+// For platformio you need theU8g2 library decalred in the platformio.ini file and OPI PSRAM set
+// lib_deps =  olikraus/U8g2 @ ^2.35.30
+// ; Overriding defaults to enable OPI PSRAM
+// build_flags = 
+//    -DBOARD_HAS_PSRAM
+//    -DARDUINO_USB_CDC_ON_BOOT=1
+// board_build.arduino.memory_type = qio_opi
+// board_build.flash_mode = qio
+// board_upload.flash_size = 8MB
+//
+// possibly include the new onewire library
+// lib_deps =  pstolarz/OneWireNg @ ^0.13.0
+// ======================================================
+// STANDALONE TESTING:
+// Uncomment ONE of these to test individual parts:
+// #define TEST_PART1_STANDALONE  // Test image collection only
+// #define TEST_PART2_STANDALONE  // Test training only
+// #define TEST_PART3_STANDALONE  // Test inference only
+// #define TEST_PART4_STANDALONE  // Test menu system only
+// ======================================================
+
+
+// ██████████████████████████████████████████████████████████████████████████████
+// ██                                                                          ██
+// ██  PART 0: CORE SYSTEM (ALWAYS INCLUDED)                                   ██
+// ██  Headers, Defines, Pins, Globals, Memory, Weights, Setup, Loop           ██
+// ██                                                                          ██
+// ██████████████████████████████████████████████████████████████████████████████
+
+// ======================================================
+// PATCH: JSON CONFIG SYSTEM
+// Replace the entire section from the first #include down
+// through the closing brace of setup() with this file.
+// Everything from Part 1 onward stays exactly the same.
+//
+// Required library (add to platformio.ini or Arduino Library Manager):
+//   ArduinoJson  >= 7.x   (bblanchon/ArduinoJson)
+//   platformio:  lib_deps = bblanchon/ArduinoJson @ ^7.3.1
+// ======================================================
+
+#include "esp_camera.h"
+#include "img_converters.h"
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <vector>
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <ArduinoJson.h>       // <-- NEW: JSON config support
+// NOTE: esp_camera.h and img_converters.h are part of the ESP32 Arduino core
+//       (arduino-esp32 >= 2.0.x).  If you get "no such file" errors, install
+//       the Seeed XIAO ESP32S3 board package from Boards Manager:
+//       https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+//
+// Arduino IDE OPI PSRAM setup (Tools menu):
+//   Board          : XIAO_ESP32S3  (or "Seeed Studio XIAO ESP32S3 Sense")
+//   PSRAM          : OPI PSRAM
+//   USB CDC On Boot: Enabled
+//   Flash Size     : 8MB (64Mb)
+//   Flash Mode     : QIO 80MHz
+//
+// Libraries required (Sketch → Include Library → Manage Libraries):
+//   U8g2         by olikraus
+//   ArduinoJson  by Benoit Blanchon  >= 7.x
+
+U8G2_SSD1306_72X40_ER_1_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE);
+
+// ======================================================
+// COMPILED-IN DEFAULTS
+// These values are used when /header/config.json is
+// absent or a key is missing from it.
+// They are also written OUT as the initial config.json
+// the first time the device boots with an SD card.
+// ======================================================
+#define DEFAULT_INPUT_SIZE      64
+#define DEFAULT_NUM_CLASSES      3
+#define DEFAULT_CONV1_FILTERS    4
+#define DEFAULT_CONV2_FILTERS    8
+#define DEFAULT_LEARNING_RATE    0.0003f
+#define DEFAULT_BATCH_SIZE      12
+#define DEFAULT_TARGET_EPOCHS   10
+#define DEFAULT_THRESHOLD_PRESS  1100
+#define DEFAULT_THRESHOLD_RELEASE 900
+#define DEFAULT_SCREEN_TIMEOUT   300000UL   // 5 minutes in ms
+#define DEFAULT_WEIGHTS_FILE    "myWeights.bin"
+// Default class labels — up to 8 classes supported
+#define DEFAULT_NUM_LABELS       3
+const char* DEFAULT_LABELS[]  = { "0Blank", "1Circle", "2Square" };
+
+// ======================================================
+// RUNTIME CONFIG STRUCT
+// Populated from JSON at boot; everything downstream
+// reads from myCfg instead of compile-time #defines.
+// ======================================================
+struct MyConfig {
+  // --- Model architecture (must match the .bin weights file) ---
+  int   inputSize;          // square input image side length
+  int   numClasses;         // number of output classes
+  int   conv1Filters;       // filters in first conv layer
+  int   conv2Filters;       // filters in second conv layer
+
+  // --- Derived sizes (computed from architecture above) ---
+  int   conv1OutputSize;    // inputSize - 2
+  int   pool1OutputSize;    // conv1OutputSize / 2
+  int   conv2OutputSize;    // pool1OutputSize - 2
+  int   flattenedSize;      // conv2OutputSize^2 * conv2Filters
+  int   conv1Weights;       // 3*3*3*conv1Filters
+  int   conv2Weights;       // 3*3*conv1Filters*conv2Filters
+  int   outputWeights;      // flattenedSize * numClasses
+
+  // --- Training hyperparameters ---
+  float learningRate;
+  int   batchSize;
+  int   targetEpochs;
+
+  // --- Hardware / UI ---
+  int           thresholdPress;
+  int           thresholdRelease;
+  unsigned long screenTimeout;   // ms
+
+  // --- Class labels (dynamic, up to 8) ---
+  int    numLabels;
+  String classLabels[8];
+
+  // --- File routing ---
+  String weightsFile;       // filename inside /header/  e.g. "myWeights.bin"
+};
+
+MyConfig myCfg;   // single global instance
+
+// ======================================================
+// HELPER: Compute all derived architecture sizes
+// Call this any time inputSize / filter counts change.
+// ======================================================
+void myComputeArchSizes() {
+  myCfg.conv1OutputSize = myCfg.inputSize - 2;
+  myCfg.pool1OutputSize = myCfg.conv1OutputSize / 2;
+  myCfg.conv2OutputSize = myCfg.pool1OutputSize - 2;
+  myCfg.flattenedSize   = myCfg.conv2OutputSize * myCfg.conv2OutputSize * myCfg.conv2Filters;
+  myCfg.conv1Weights    = 3 * 3 * 3 * myCfg.conv1Filters;
+  myCfg.conv2Weights    = 3 * 3 * myCfg.conv1Filters * myCfg.conv2Filters;
+  myCfg.outputWeights   = myCfg.flattenedSize * myCfg.numClasses;
+}
+
+// ======================================================
+// HELPER: Fill myCfg with compiled-in defaults
+// ======================================================
+void myApplyDefaultConfig() {
+  myCfg.inputSize         = DEFAULT_INPUT_SIZE;
+  myCfg.numClasses        = DEFAULT_NUM_CLASSES;
+  myCfg.conv1Filters      = DEFAULT_CONV1_FILTERS;
+  myCfg.conv2Filters      = DEFAULT_CONV2_FILTERS;
+  myCfg.learningRate      = DEFAULT_LEARNING_RATE;
+  myCfg.batchSize         = DEFAULT_BATCH_SIZE;
+  myCfg.targetEpochs      = DEFAULT_TARGET_EPOCHS;
+  myCfg.thresholdPress    = DEFAULT_THRESHOLD_PRESS;
+  myCfg.thresholdRelease  = DEFAULT_THRESHOLD_RELEASE;
+  myCfg.screenTimeout     = DEFAULT_SCREEN_TIMEOUT;
+  myCfg.weightsFile       = DEFAULT_WEIGHTS_FILE;
+  myCfg.numLabels         = DEFAULT_NUM_LABELS;
+  for (int i = 0; i < DEFAULT_NUM_LABELS; i++) {
+    myCfg.classLabels[i] = String(DEFAULT_LABELS[i]);
+  }
+  myComputeArchSizes();
+}
+
+// ======================================================
+// HELPER: Write current myCfg back to SD as JSON
+// Used on first boot (no config.json found) so the user
+// has a ready-made file they can edit in the field.
+// ======================================================
+void mySaveConfig() {
+  if (!SD.exists("/header")) SD.mkdir("/header");
+  File f = SD.open("/header/config.json", FILE_WRITE);
+  if (!f) {
+    Serial.println("[config] ERROR: could not write /header/config.json");
+    return;
+  }
+
+  // Use a 512-byte JSON document (well within stack)
+  JsonDocument doc;
+  doc["inputSize"]         = myCfg.inputSize;
+  doc["numClasses"]        = myCfg.numClasses;
+  doc["conv1Filters"]      = myCfg.conv1Filters;
+  doc["conv2Filters"]      = myCfg.conv2Filters;
+  doc["learningRate"]      = myCfg.learningRate;
+  doc["batchSize"]         = myCfg.batchSize;
+  doc["targetEpochs"]      = myCfg.targetEpochs;
+  doc["thresholdPress"]    = myCfg.thresholdPress;
+  doc["thresholdRelease"]  = myCfg.thresholdRelease;
+  doc["screenTimeout"]     = (unsigned long)myCfg.screenTimeout;
+  doc["weightsFile"]       = myCfg.weightsFile;
+
+  JsonArray labels = doc["classLabels"].to<JsonArray>();
+  for (int i = 0; i < myCfg.numLabels; i++) {
+    labels.add(myCfg.classLabels[i]);
+  }
+
+  serializeJsonPretty(doc, f);
+  f.close();
+  Serial.println("[config] Wrote default config to /header/config.json");
+}
+
+// ======================================================
+// MAIN CONFIG LOADER  —  call once in setup() after SD
+// ======================================================
+void myLoadConfig() {
+  // 1. Start from safe compiled-in defaults
+  myApplyDefaultConfig();
+
+  const char* path = "/header/config.json";
+
+  // 2. If file doesn't exist, write defaults and return
+  if (!SD.exists(path)) {
+    Serial.println("[config] /header/config.json not found — using defaults");
+    mySaveConfig();   // create it for the user to edit
+    return;
+  }
+
+  // 3. Open and read the file
+  File f = SD.open(path, FILE_READ);
+  if (!f) {
+    Serial.println("[config] ERROR: could not open config.json — using defaults");
+    return;
+  }
+
+  // 4. Parse JSON  (512 bytes is enough for this document)
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    Serial.printf("[config] JSON parse error: %s — using defaults\n", err.c_str());
+    return;
+  }
+
+  // 5. Apply each key only if present; otherwise keep the default.
+  //    Using doc["key"] | defaultValue  is the ArduinoJson idiom for this.
+  myCfg.inputSize        = doc["inputSize"]        | DEFAULT_INPUT_SIZE;
+  myCfg.numClasses       = doc["numClasses"]       | DEFAULT_NUM_CLASSES;
+  myCfg.conv1Filters     = doc["conv1Filters"]     | DEFAULT_CONV1_FILTERS;
+  myCfg.conv2Filters     = doc["conv2Filters"]     | DEFAULT_CONV2_FILTERS;
+  myCfg.learningRate     = doc["learningRate"]      | DEFAULT_LEARNING_RATE;
+  myCfg.batchSize        = doc["batchSize"]        | DEFAULT_BATCH_SIZE;
+  myCfg.targetEpochs     = doc["targetEpochs"]     | DEFAULT_TARGET_EPOCHS;
+  myCfg.thresholdPress   = doc["thresholdPress"]   | DEFAULT_THRESHOLD_PRESS;
+  myCfg.thresholdRelease = doc["thresholdRelease"] | DEFAULT_THRESHOLD_RELEASE;
+  myCfg.screenTimeout    = doc["screenTimeout"]    | (int)DEFAULT_SCREEN_TIMEOUT;
+  myCfg.weightsFile      = doc["weightsFile"]      | DEFAULT_WEIGHTS_FILE;
+
+  // 6. Class labels array — fall back to defaults if missing/empty
+  if (doc["classLabels"].is<JsonArray>()) {
+    JsonArray arr = doc["classLabels"].as<JsonArray>();
+    int count = 0;
+    for (JsonVariant v : arr) {
+      if (count >= 8) break;   // hard cap
+      myCfg.classLabels[count++] = v.as<String>();
+    }
+    if (count > 0) {
+      myCfg.numLabels  = count;
+      myCfg.numClasses = count;   // labels and classes must agree
+    }
+  }
+
+  // 7. Recompute all derived sizes with whatever we loaded
+  myComputeArchSizes();
+
+  Serial.println("[config] Loaded /header/config.json:");
+  Serial.printf("  inputSize=%d  numClasses=%d  conv1F=%d  conv2F=%d\n",
+                myCfg.inputSize, myCfg.numClasses,
+                myCfg.conv1Filters, myCfg.conv2Filters);
+  Serial.printf("  flattenedSize=%d  outputWeights=%d\n",
+                myCfg.flattenedSize, myCfg.outputWeights);
+  Serial.printf("  learningRate=%.5f  batchSize=%d  targetEpochs=%d\n",
+                myCfg.learningRate, myCfg.batchSize, myCfg.targetEpochs);
+  Serial.printf("  weightsFile=%s\n", myCfg.weightsFile.c_str());
+  Serial.print ("  classLabels=");
+  for (int i = 0; i < myCfg.numLabels; i++) {
+    Serial.print(myCfg.classLabels[i]);
+    if (i < myCfg.numLabels - 1) Serial.print(", ");
+  }
+  Serial.println();
+}
+
+
+// ======================================================
+// LEGACY SHIM — keeps old variable names working
+// Any code that still references the bare global names
+// (LEARNING_RATE, BATCH_SIZE, etc.) will use these.
+// As you refactor Part 1-4, replace with myCfg.xxx and
+// delete these one by one.
+// ======================================================
+// NOTE: myClassLabels[] is now myCfg.classLabels[].
+//       The shim below syncs them after config loads.
+String myClassLabels[8];   // sized to max 8 classes
+
+void mySyncLegacyVars() {
+  for (int i = 0; i < myCfg.numLabels; i++) {
+    myClassLabels[i] = myCfg.classLabels[i];
+  }
+}
+
+// These five were previously bare globals — now just aliases.
+// Parts 1-4 can keep reading them unchanged until refactored.
+#define LEARNING_RATE   (myCfg.learningRate)
+#define BATCH_SIZE      (myCfg.batchSize)
+#define TARGET_EPOCHS   (myCfg.targetEpochs)
+#define NUM_CLASSES     (myCfg.numClasses)
+#define INPUT_SIZE      (myCfg.inputSize)
+
+// Architecture sizes — were #defines, now runtime values via myCfg
+#define CONV1_FILTERS   (myCfg.conv1Filters)
+#define CONV2_FILTERS   (myCfg.conv2Filters)
+#define CONV1_WEIGHTS   (myCfg.conv1Weights)
+#define CONV2_WEIGHTS   (myCfg.conv2Weights)
+#define FLATTENED_SIZE  (myCfg.flattenedSize)
+#define OUTPUT_WEIGHTS  (myCfg.outputWeights)
+#define CONV1_OUTPUT_SIZE (myCfg.conv1OutputSize)
+#define POOL1_OUTPUT_SIZE (myCfg.pool1OutputSize)
+#define CONV2_OUTPUT_SIZE (myCfg.conv2OutputSize)
+
+
+// ======================================================
+// CONFIGURATION & UI PARAMETERS
+// ======================================================
+const int   myTotalItems         = 5;
+// thresholds and timeout now live in myCfg, but keep
+// these const aliases so Part 4 compiles without changes:
+#define myThresholdPress   (myCfg.thresholdPress)
+#define myThresholdRelease (myCfg.thresholdRelease)
+#define myScreenTimeout    (myCfg.screenTimeout)
+
+
+// ======================================================
+// UNIFIED TOUCH INPUT SYSTEM
+// ======================================================
+struct TouchState {
+  bool isTouching         = false;
+  int  tapCount           = 0;
+  unsigned long firstTapTime    = 0;
+  unsigned long lastReleaseTime = 0;
+  unsigned long lastCheckTime   = 0;
+  const unsigned long tapWindow    = 800;
+  const int           longPressTaps = 3;
+  const unsigned long debounceDelay = 50;
+};
+TouchState myTouch;
+
+
+// ======================================================
+// SYSTEM LOGIC VARIABLES
+// ======================================================
+unsigned long myLastActivityTime = 0;
+unsigned long myLastTapTime      = 0;
+const int     myTapCooldown      = 250;
+int           myMenuIndex        = 1;
+bool          myIsSelected       = false;
+
+
+// ======================================================
+// XIAO ESP32-S3 CAMERA PINS  (unchanged)
+// ======================================================
+#define PWDN_GPIO_NUM   -1
+#define RESET_GPIO_NUM  -1
+#define XCLK_GPIO_NUM   10
+#define SIOD_GPIO_NUM   40
+#define SIOC_GPIO_NUM   39
+#define Y9_GPIO_NUM     48
+#define Y8_GPIO_NUM     11
+#define Y7_GPIO_NUM     12
+#define Y6_GPIO_NUM     14
+#define Y5_GPIO_NUM     16
+#define Y4_GPIO_NUM     18
+#define Y3_GPIO_NUM     17
+#define Y2_GPIO_NUM     15
+#define VSYNC_GPIO_NUM  38
+#define HREF_GPIO_NUM   47
+#define PCLK_GPIO_NUM   13
+
+
+// ======================================================
+// GLOBAL ML BUFFERS  (all PSRAM, allocated after config)
+// ======================================================
+uint8_t* myRgbBuffer    = nullptr;
+
+float* myInputBuffer    = nullptr;
+float* myConv1_w        = nullptr;
+float* myConv1_b        = nullptr;
+float* myConv2_w        = nullptr;
+float* myConv2_b        = nullptr;
+float* myOutput_w       = nullptr;
+float* myOutput_b       = nullptr;
+
+float* myConv1_w_grad   = nullptr;
+float* myConv1_b_grad   = nullptr;
+float* myConv2_w_grad   = nullptr;
+float* myConv2_b_grad   = nullptr;
+float* myOutput_w_grad  = nullptr;
+float* myOutput_b_grad  = nullptr;
+
+float* myConv1_w_m      = nullptr;
+float* myConv1_w_v      = nullptr;
+float* myConv1_b_m      = nullptr;
+float* myConv1_b_v      = nullptr;
+float* myConv2_w_m      = nullptr;
+float* myConv2_w_v      = nullptr;
+float* myConv2_b_m      = nullptr;
+float* myConv2_b_v      = nullptr;
+float* myOutput_w_m     = nullptr;
+float* myOutput_w_v     = nullptr;
+float* myOutput_b_m     = nullptr;
+float* myOutput_b_v     = nullptr;
+
+float* myConv1_output   = nullptr;
+float* myPool1_output   = nullptr;
+float* myConv2_output   = nullptr;
+float* myDense_output   = nullptr;
+
+float* myDense_grad     = nullptr;
+float* myConv2_grad     = nullptr;
+float* myPool1_grad     = nullptr;
+float* myConv1_grad     = nullptr;
+
+struct TrainingItem { String path; int label; };
+std::vector<TrainingItem> myTrainingData;
+
+
+// ======================================================
+// UTILITY FUNCTIONS  (unchanged)
+// ======================================================
+inline float clip_value(float v, float mn=-100, float mx=100) {
+  if (isnan(v) || isinf(v)) return 0;
+  return constrain(v, mn, mx);
+}
+inline float leaky_relu(float x)       { return x > 0 ? x : 0.1f * x; }
+inline float leaky_relu_deriv(float x) { return x > 0 ? 1.0f : 0.1f; }
+
+
+// ======================================================
+// TOUCH FUNCTIONS  (unchanged from v42)
+// ======================================================
+int myReadTouch() {
+  int sum = 0;
+  for (int i = 0; i < 3; i++) { sum += analogRead(A0); delayMicroseconds(100); }
+  return sum / 3;
+}
+
+void myResetTouchState() {
+  myTouch.isTouching = false;
+  myTouch.tapCount   = 0;
+  myTouch.firstTapTime = myTouch.lastReleaseTime = myTouch.lastCheckTime = 0;
+}
+
+void myUpdateTouchState() {
+  unsigned long now = millis();
+  if (now - myTouch.lastCheckTime < 20) return;
+  myTouch.lastCheckTime = now;
+  int val = myReadTouch();
+  bool touchActive = myTouch.isTouching ? (val > myThresholdRelease) : (val > myThresholdPress);
+  if (touchActive && !myTouch.isTouching) {
+    if (now - myTouch.lastReleaseTime < myTouch.debounceDelay) return;
+    myTouch.isTouching = true;
+    if (myTouch.tapCount == 0 || (now - myTouch.firstTapTime < myTouch.tapWindow)) {
+      if (myTouch.tapCount == 0) myTouch.firstTapTime = now;
+      myTouch.tapCount++;
+      Serial.printf("Tap #%d\n", myTouch.tapCount);
+    } else {
+      myTouch.tapCount = 1;
+      myTouch.firstTapTime = now;
+      Serial.println("Tap #1 (new window)");
+    }
+  }
+  if (!touchActive && myTouch.isTouching) {
+    myTouch.isTouching = false;
+    myTouch.lastReleaseTime = now;
+  }
+}
+
+int myCheckTouchInput() {
+  myUpdateTouchState();
+  unsigned long now = millis();
+  if (myTouch.tapCount > 0 && !myTouch.isTouching) {
+    if (now - myTouch.firstTapTime > myTouch.tapWindow) {
+      int result = (myTouch.tapCount >= myTouch.longPressTaps) ? 2 : 1;
+      int count  = myTouch.tapCount;
+      myResetTouchState();
+      Serial.printf(result == 2 ? "LONG PRESS (%d taps)\n" : "TAP (%d tap%s)\n",
+                    count, count > 1 ? "s" : "");
+      return result;
+    }
+  }
+  return 0;
+}
+
+void myCheckTouchBackground() { myUpdateTouchState(); }
+
+int myPeekTouchAction() {
+  myUpdateTouchState();
+  unsigned long now = millis();
+  if (myTouch.tapCount > 0 && !myTouch.isTouching)
+    if (now - myTouch.firstTapTime > myTouch.tapWindow)
+      return (myTouch.tapCount >= myTouch.longPressTaps) ? 2 : 1;
+  return 0;
+}
+
+
+// ======================================================
+// FORWARD DECLARATIONS  (Parts 1-4 defined later)
+// ======================================================
+void myActionCollect(int classIdx);
+void myActionTrain();
+void myActionInfer();
+void myResetMenuState();
+void myHandleMenuNavigation();
+void myDrawMenu();
+
+
+// ======================================================
+// SETUP
+// ======================================================
+void setup() {
+  Serial.begin(115200);
+  while (!Serial && millis() < 3000);
+  delay(1000);
+
+  Serial.println("\n=== XIAO ESP32-S3 ML System Starting ===");
+  Serial.printf("Free heap:  %d bytes\n", ESP.getFreeHeap());
+  Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
+
+  pinMode(A0, INPUT);
+  u8g2.begin();
+
+  // --- SD card must mount BEFORE config load ---
+  if (!SD.begin(21)) {
+    Serial.println("SD card initialization failed");
+    u8g2.firstPage();
+    do { u8g2.drawStr(0, 15, "SD CARD ERROR!"); } while (u8g2.nextPage());
+    while (1) { delay(1000); }
+  }
+  Serial.println("SD card mounted");
+
+  // --- Load JSON config (or write defaults if absent) ---
+  myLoadConfig();
+
+  // --- Sync legacy name arrays so Parts 1-4 still work ---
+  mySyncLegacyVars();
+
+  // --- Shared RGB decode buffer (always 240x240 from camera) ---
+  myRgbBuffer = (uint8_t*)ps_malloc(240 * 240 * 3);
+  if (!myRgbBuffer) Serial.println("WARNING: RGB buffer alloc failed!");
+
+  // --- Camera ---
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk  = XCLK_GPIO_NUM;  config.pin_pclk  = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;  config.pin_href  = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn  = PWDN_GPIO_NUM;   config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size   = FRAMESIZE_240X240;
+  config.jpeg_quality = 12;
+  config.fb_count     = 1;
+  esp_camera_init(&config);
+  Serial.println("Camera initialized");
+
+  myLastActivityTime = millis();
+  myResetMenuState();
+  delay(2000);
+
+  Serial.println("System ready — Tap A0 to navigate, 3+ taps to select");
+  myDrawMenu();
+}
+
+
+void loop() {
+  myHandleMenuNavigation();
+}
+
+// ======================================================
+// END OF PATCH — Parts 1, 2, 3, 4 follow unchanged.
+// The only edit needed in Part 1-4:
+//   Replace  INPUT_SIZE       with  myCfg.inputSize    (optional, macro works too)
+//   Replace  myClassLabels[i] with  myCfg.classLabels[i] OR keep as-is (shim handles it)
+//   In myLoadImageFromFile() the resize loop already uses INPUT_SIZE macro — no change needed.
+//   In myAllocateMemory() all the #define constants are now macros into myCfg — no change needed.
+// ======================================================
+
+
+// END OF FIXED1 - Continue with your original Part 1, Part 2, Part 3, Part 4
+// Replace only the THREE action functions (myActionCollect, myActionTrain, myActionInfer)
+// with the versions in FIXED2
+
+// ======================================================
+// CORE ML FUNCTIONS (myAllocateMemory, myLoadWeights,
+//   mySaveWeights, myLoadImageFromFile)
+// These MUST be defined outside of any #ifdef block so
+// they are always compiled in a normal build.
+// ======================================================
+
+void myAllocateMemory() {
+  // Allocate all weight / gradient / moment buffers in PSRAM
+  myConv1_w        = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
+  myConv1_b        = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
+  myConv2_w        = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
+  myConv2_b        = (float*)ps_malloc(CONV2_FILTERS * sizeof(float));
+  myOutput_w       = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
+  myOutput_b       = (float*)ps_malloc(NUM_CLASSES    * sizeof(float));
+
+  myConv1_w_grad   = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
+  myConv1_b_grad   = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
+  myConv2_w_grad   = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
+  myConv2_b_grad   = (float*)ps_malloc(CONV2_FILTERS * sizeof(float));
+  myOutput_w_grad  = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
+  myOutput_b_grad  = (float*)ps_malloc(NUM_CLASSES    * sizeof(float));
+
+  myConv1_w_m      = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
+  myConv1_w_v      = (float*)ps_malloc(CONV1_WEIGHTS * sizeof(float));
+  myConv1_b_m      = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
+  myConv1_b_v      = (float*)ps_malloc(CONV1_FILTERS * sizeof(float));
+  myConv2_w_m      = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
+  myConv2_w_v      = (float*)ps_malloc(CONV2_WEIGHTS * sizeof(float));
+  myConv2_b_m      = (float*)ps_malloc(CONV2_FILTERS * sizeof(float));
+  myConv2_b_v      = (float*)ps_malloc(CONV2_FILTERS * sizeof(float));
+  myOutput_w_m     = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
+  myOutput_w_v     = (float*)ps_malloc(OUTPUT_WEIGHTS * sizeof(float));
+  myOutput_b_m     = (float*)ps_malloc(NUM_CLASSES    * sizeof(float));
+  myOutput_b_v     = (float*)ps_malloc(NUM_CLASSES    * sizeof(float));
+
+  myConv1_output   = (float*)ps_malloc(CONV1_OUTPUT_SIZE * CONV1_OUTPUT_SIZE * CONV1_FILTERS * sizeof(float));
+  myPool1_output   = (float*)ps_malloc(POOL1_OUTPUT_SIZE * POOL1_OUTPUT_SIZE * CONV1_FILTERS * sizeof(float));
+  myConv2_output   = (float*)ps_malloc(CONV2_OUTPUT_SIZE * CONV2_OUTPUT_SIZE * CONV2_FILTERS * sizeof(float));
+  myDense_output   = (float*)ps_malloc(NUM_CLASSES * sizeof(float));
+
+  myDense_grad     = (float*)ps_malloc(FLATTENED_SIZE * sizeof(float));
+  myConv2_grad     = (float*)ps_malloc(CONV2_OUTPUT_SIZE * CONV2_OUTPUT_SIZE * CONV2_FILTERS * sizeof(float));
+  myPool1_grad     = (float*)ps_malloc(POOL1_OUTPUT_SIZE * POOL1_OUTPUT_SIZE * CONV1_FILTERS * sizeof(float));
+  myConv1_grad     = (float*)ps_malloc(CONV1_OUTPUT_SIZE * CONV1_OUTPUT_SIZE * CONV1_FILTERS * sizeof(float));
+
+  myInputBuffer    = (float*)ps_malloc(INPUT_SIZE * INPUT_SIZE * 3 * sizeof(float));
+
+  // Initialise weights with small random values, zero everything else
+  if (myConv1_w) for(int i=0;i<CONV1_WEIGHTS;i++) myConv1_w[i] = ((float)random(-1000,1000))/100000.0f;
+  if (myConv2_w) for(int i=0;i<CONV2_WEIGHTS;i++) myConv2_w[i] = ((float)random(-1000,1000))/100000.0f;
+  if (myOutput_w) for(int i=0;i<OUTPUT_WEIGHTS;i++) myOutput_w[i] = ((float)random(-1000,1000))/100000.0f;
+  if (myConv1_b)  memset(myConv1_b,  0, CONV1_FILTERS  * sizeof(float));
+  if (myConv2_b)  memset(myConv2_b,  0, CONV2_FILTERS  * sizeof(float));
+  if (myOutput_b) memset(myOutput_b, 0, NUM_CLASSES     * sizeof(float));
+
+  // Zero all Adam moment buffers
+  if (myConv1_w_m)   memset(myConv1_w_m,   0, CONV1_WEIGHTS  * sizeof(float));
+  if (myConv1_w_v)   memset(myConv1_w_v,   0, CONV1_WEIGHTS  * sizeof(float));
+  if (myConv1_b_m)   memset(myConv1_b_m,   0, CONV1_FILTERS  * sizeof(float));
+  if (myConv1_b_v)   memset(myConv1_b_v,   0, CONV1_FILTERS  * sizeof(float));
+  if (myConv2_w_m)   memset(myConv2_w_m,   0, CONV2_WEIGHTS  * sizeof(float));
+  if (myConv2_w_v)   memset(myConv2_w_v,   0, CONV2_WEIGHTS  * sizeof(float));
+  if (myConv2_b_m)   memset(myConv2_b_m,   0, CONV2_FILTERS  * sizeof(float));
+  if (myConv2_b_v)   memset(myConv2_b_v,   0, CONV2_FILTERS  * sizeof(float));
+  if (myOutput_w_m)  memset(myOutput_w_m,  0, OUTPUT_WEIGHTS * sizeof(float));
+  if (myOutput_w_v)  memset(myOutput_w_v,  0, OUTPUT_WEIGHTS * sizeof(float));
+  if (myOutput_b_m)  memset(myOutput_b_m,  0, NUM_CLASSES    * sizeof(float));
+  if (myOutput_b_v)  memset(myOutput_b_v,  0, NUM_CLASSES    * sizeof(float));
+
+  // Zero gradient buffers
+  if (myConv1_w_grad)  memset(myConv1_w_grad,  0, CONV1_WEIGHTS  * sizeof(float));
+  if (myConv1_b_grad)  memset(myConv1_b_grad,  0, CONV1_FILTERS  * sizeof(float));
+  if (myConv2_w_grad)  memset(myConv2_w_grad,  0, CONV2_WEIGHTS  * sizeof(float));
+  if (myConv2_b_grad)  memset(myConv2_b_grad,  0, CONV2_FILTERS  * sizeof(float));
+  if (myOutput_w_grad) memset(myOutput_w_grad,  0, OUTPUT_WEIGHTS * sizeof(float));
+  if (myOutput_b_grad) memset(myOutput_b_grad,  0, NUM_CLASSES    * sizeof(float));
+
+  Serial.printf("[mem] Alloc done. Free PSRAM: %d bytes\n", ESP.getFreePsram());
+}
+
+// -------------------------------------------------------
+// Save all weights + biases to SD binary file
+// -------------------------------------------------------
+void mySaveWeights() {
+  String filePath = "/header/" + myCfg.weightsFile;
+  if (!SD.exists("/header")) SD.mkdir("/header");
+  File f = SD.open(filePath.c_str(), FILE_WRITE);
+  if (!f) { Serial.println("[weights] ERROR: could not open file for writing"); return; }
+
+  // Write a simple header: inputSize, numClasses, conv1Filters, conv2Filters
+  f.write((uint8_t*)&myCfg.inputSize,    sizeof(int));
+  f.write((uint8_t*)&myCfg.numClasses,   sizeof(int));
+  f.write((uint8_t*)&myCfg.conv1Filters, sizeof(int));
+  f.write((uint8_t*)&myCfg.conv2Filters, sizeof(int));
+
+  f.write((uint8_t*)myConv1_w,  CONV1_WEIGHTS  * sizeof(float));
+  f.write((uint8_t*)myConv1_b,  CONV1_FILTERS  * sizeof(float));
+  f.write((uint8_t*)myConv2_w,  CONV2_WEIGHTS  * sizeof(float));
+  f.write((uint8_t*)myConv2_b,  CONV2_FILTERS  * sizeof(float));
+  f.write((uint8_t*)myOutput_w, OUTPUT_WEIGHTS * sizeof(float));
+  f.write((uint8_t*)myOutput_b, NUM_CLASSES    * sizeof(float));
+  f.close();
+  Serial.printf("[weights] Saved to %s\n", filePath.c_str());
+}
+
+// -------------------------------------------------------
+// Load weights from SD.  Returns true on success.
+// Also allocates all buffers so forward-pass works.
+// -------------------------------------------------------
+bool myLoadWeights() {
+  String filePath = "/header/" + myCfg.weightsFile;
+  if (!SD.exists(filePath.c_str())) {
+    Serial.printf("[weights] File not found: %s\n", filePath.c_str());
+    return false;
+  }
+  File f = SD.open(filePath.c_str(), FILE_READ);
+  if (!f) { Serial.println("[weights] ERROR: could not open file for reading"); return false; }
+
+  // Read and validate header
+  int hInputSize, hNumClasses, hConv1F, hConv2F;
+  f.read((uint8_t*)&hInputSize,  sizeof(int));
+  f.read((uint8_t*)&hNumClasses, sizeof(int));
+  f.read((uint8_t*)&hConv1F,     sizeof(int));
+  f.read((uint8_t*)&hConv2F,     sizeof(int));
+
+  if (hInputSize != myCfg.inputSize || hNumClasses != myCfg.numClasses ||
+      hConv1F    != myCfg.conv1Filters || hConv2F  != myCfg.conv2Filters) {
+    Serial.printf("[weights] Architecture mismatch! File: %d/%d/%d/%d  Config: %d/%d/%d/%d\n",
+                  hInputSize, hNumClasses, hConv1F, hConv2F,
+                  myCfg.inputSize, myCfg.numClasses, myCfg.conv1Filters, myCfg.conv2Filters);
+    f.close();
+    return false;
+  }
+
+  // Allocate buffers (safe to call even if already allocated — will overwrite)
+  myAllocateMemory();
+
+  f.read((uint8_t*)myConv1_w,  CONV1_WEIGHTS  * sizeof(float));
+  f.read((uint8_t*)myConv1_b,  CONV1_FILTERS  * sizeof(float));
+  f.read((uint8_t*)myConv2_w,  CONV2_WEIGHTS  * sizeof(float));
+  f.read((uint8_t*)myConv2_b,  CONV2_FILTERS  * sizeof(float));
+  f.read((uint8_t*)myOutput_w, OUTPUT_WEIGHTS * sizeof(float));
+  f.read((uint8_t*)myOutput_b, NUM_CLASSES    * sizeof(float));
+  f.close();
+  Serial.printf("[weights] Loaded from %s\n", filePath.c_str());
+  return true;
+}
+
+// -------------------------------------------------------
+// Load a JPEG from SD, decode, resize to INPUT_SIZE x INPUT_SIZE,
+// normalise to [0,1] and store in buf (float, RGB interleaved).
+// Returns true on success.
+// -------------------------------------------------------
+bool myLoadImageFromFile(const char* path, float* buf) {
+  File f = SD.open(path, FILE_READ);
+  if (!f) { Serial.printf("[img] Cannot open: %s\n", path); return false; }
+
+  size_t jpgLen = f.size();
+  uint8_t* jpgBuf = (uint8_t*)ps_malloc(jpgLen);
+  if (!jpgBuf) { Serial.println("[img] ps_malloc failed for JPEG buffer"); f.close(); return false; }
+
+  f.read(jpgBuf, jpgLen);
+  f.close();
+
+  // Decode JPEG to raw RGB888 into the shared global RGB buffer (240x240x3 worst case)
+  // We decode directly; actual decoded width/height come from the stream.
+  // Use a local temp buffer sized to our max camera resolution.
+  const int MAX_DIM = 240;
+  uint8_t* rgbBuf = (uint8_t*)ps_malloc(MAX_DIM * MAX_DIM * 3);
+  if (!rgbBuf) {
+    Serial.println("[img] ps_malloc failed for RGB buffer");
+    free(jpgBuf);
+    return false;
+  }
+
+  // fmt2rgb888 works on raw JPEG bytes
+  bool ok = fmt2rgb888(jpgBuf, jpgLen, PIXFORMAT_JPEG, rgbBuf);
+  free(jpgBuf);
+
+  if (!ok) {
+    Serial.printf("[img] JPEG decode failed: %s\n", path);
+    free(rgbBuf);
+    return false;
+  }
+
+  // Resize from 240x240 → INPUT_SIZE x INPUT_SIZE (nearest neighbour)
+  int inSize = myCfg.inputSize;
+  for (int y = 0; y < inSize; y++) {
+    int sy = min((int)((y + 0.5f) * MAX_DIM / inSize), MAX_DIM - 1);
+    for (int x = 0; x < inSize; x++) {
+      int sx = min((int)((x + 0.5f) * MAX_DIM / inSize), MAX_DIM - 1);
+      int srcIdx = (sy * MAX_DIM + sx) * 3;
+      int dstIdx = (y  * inSize  + x ) * 3;
+      buf[dstIdx]     = rgbBuf[srcIdx]     * 0.003921569f;  // /255
+      buf[dstIdx + 1] = rgbBuf[srcIdx + 1] * 0.003921569f;
+      buf[dstIdx + 2] = rgbBuf[srcIdx + 2] * 0.003921569f;
+    }
+  }
+
+  free(rgbBuf);
+  return true;
+}
+
+// ██████████████████████████████████████████████████████████████████████████████
+// ██                                                                          ██
+// ██  PART 1: IMAGE COLLECTION FUNCTIONS                                      ██
+// ██                                                                          ██
+// ██  DEPENDENCIES (functions called from Part 0):                            ██
+// ██  - myResetMenuState()                     [Part 4]                       ██
+// ██  - myReadTouch()                          [Part 4]                       ██
+// ██                                                                          ██
+// ██  VARIABLES USED (defined in Part 0):                                     ██
+// ██  - myClassLabels[3], myThresholdPress, myLongPressTime                   ██
+// ██  - u8g2 (OLED display object)                                            ██
+// ██                                                                          ██
+// ██████████████████████████████████████████████████████████████████████████████
+
+#ifdef TEST_PART1_STANDALONE
+// Stubs for testing Part 1 standalone
+int myReadTouch() {
+  return 500; // Return value below threshold
+}
+void myResetMenuState() {
+  Serial.println("STUB: myResetMenuState() called");
+}
+#endif
+
+void myDisplayImageOnOLED(camera_fb_t* fb, int imageCount) {
+  size_t myRgbBufferSize = fb->width * fb->height * 3;
+  uint8_t* myRgbBuffer = (uint8_t*)ps_malloc(myRgbBufferSize);
+  
+  if (myRgbBuffer == NULL) {
+    Serial.println("Failed to allocate RGB buffer for OLED preview");
+    return;
+  }
+  
+  bool conversionSuccess = fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer);
+  
+  if (!conversionSuccess) {
+    free(myRgbBuffer);
+    Serial.println("Failed to convert JPEG to RGB888 for OLED");
+    return;
+  }
+  
+  int myOledWidth = u8g2.getDisplayWidth();
+  int myOledHeight = u8g2.getDisplayHeight();
+  int myImageWidth = fb->width;
+  int myImageHeight = fb->height;
+  int myScaleX = myImageWidth / myOledWidth;
+  int myScaleY = myImageHeight / myOledHeight;
+  
+  u8g2.firstPage();
+  do {
+    for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
+      for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
+        int myImageX = myOledX * myScaleX;
+        int myImageY = myOledY * myScaleY;
+        size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
+        
+        if (myPixelIndex + 2 < myRgbBufferSize) {
+          uint8_t myRed = myRgbBuffer[myPixelIndex];
+          uint8_t myGreen = myRgbBuffer[myPixelIndex + 1];
+          uint8_t myBlue = myRgbBuffer[myPixelIndex + 2];
+          uint8_t myBrightness = (myRed + myGreen + myBlue) / 3;
+          
+          if (myBrightness > 100) {
+            u8g2.drawPixel(myOledX, myOledY);
+          }
+        }
+      }
+    }
+    
+    u8g2.setFont(u8g2_font_ncenB10_tr);
+    u8g2.setColorIndex(0);
+    u8g2.drawBox(0, 0, 20, 15);
+    u8g2.setColorIndex(1);
+    u8g2.setCursor(3, 10);
+    u8g2.print(String(imageCount));
+    
+  } while (u8g2.nextPage());
+  
+  free(myRgbBuffer);
+}
+
+void myDisplayLiveCameraPreview() {
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) return;
+  
+  size_t myRgbBufferSize = fb->width * fb->height * 3;
+  uint8_t* myRgbBuffer = (uint8_t*)ps_malloc(myRgbBufferSize);
+  
+  if (myRgbBuffer && fmt2rgb888(fb->buf, fb->len, fb->format, myRgbBuffer)) {
+    int myOledWidth = u8g2.getDisplayWidth();
+    int myOledHeight = u8g2.getDisplayHeight();
+    int myImageWidth = fb->width;
+    int myImageHeight = fb->height;
+    int myScaleX = myImageWidth / myOledWidth;
+    int myScaleY = myImageHeight / myOledHeight;
+    
+    u8g2.firstPage();
+    do {
+      for (int myOledX = 0; myOledX < myOledWidth; myOledX++) {
+        for (int myOledY = 0; myOledY < myOledHeight; myOledY++) {
+          int myImageX = myOledX * myScaleX;
+          int myImageY = myOledY * myScaleY;
+          size_t myPixelIndex = (myImageY * myImageWidth + myImageX) * 3;
+          
+          if (myPixelIndex + 2 < myRgbBufferSize) {
+            uint8_t myBrightness = (myRgbBuffer[myPixelIndex] + 
+                                    myRgbBuffer[myPixelIndex + 1] + 
+                                    myRgbBuffer[myPixelIndex + 2]) / 3;
+            if (myBrightness > 100) {
+              u8g2.drawPixel(myOledX, myOledY);
+            }
+          }
+        }
+      }
+      u8g2.setFont(u8g2_font_5x7_tf);
+      u8g2.setColorIndex(0);
+      u8g2.drawBox(50, 0, 22, 8);
+      u8g2.setColorIndex(1);
+      u8g2.drawStr(52, 7, "LIVE");
+    } while (u8g2.nextPage());
+    
+    free(myRgbBuffer);
+  }
+  
+  esp_camera_fb_return(fb);
+}
+
+
+void myActionCollect(int classIdx) {
+  Serial.printf("\n>>> Collection mode: %s\n", myClassLabels[classIdx].c_str());
+  Serial.println("Instructions:");
+  Serial.println("  TAP (1-2 taps) = Capture image");
+  Serial.println("  LONG PRESS (3+ taps) = Exit to menu");
+  Serial.println("  Serial: 'T'=capture, 'L'=exit");
+  
+  myResetTouchState();  // Clear touch state when entering
+  
+  String path = "/images/" + myClassLabels[classIdx];
+  if (!SD.exists("/images")) SD.mkdir("/images");
+  if (!SD.exists(path)) SD.mkdir(path);
+
+  int counts[3] = {0, 0, 0};
+  for(int i=0; i<3; i++) {
+    File root = SD.open("/images/" + myClassLabels[i]);
+    if(root) {
+      while(File file = root.openNextFile()) {
+        if(!file.isDirectory() && (String(file.name()).endsWith(".jpg") || String(file.name()).endsWith(".JPG"))) {
+          counts[i]++;
+        }
+        file.close();
+      }
+      root.close();
+    }
+  }
+
+  unsigned long lastPreview = 0;
+  bool shouldCapture = false;
+
+  while (true) {
+    // Live preview
+    if (millis() - lastPreview > 100) {
+      myDisplayLiveCameraPreview();
+      lastPreview = millis();
+    }
+    
+    // Serial input
+    if (Serial.available()) {
+      char c = Serial.read();
+      if (c == 'l' || c == 'L') {
+        myResetMenuState();
+        return;
+      } else if (c == 't' || c == 'T') {
+        shouldCapture = true;
+      }
+    }
+    
+    // Touch input - unified system
+    int touchAction = myCheckTouchInput();
+    if (touchAction == 2) {
+      // Long press (3+ taps) - exit
+      Serial.println("Exiting collection mode");
+      myResetMenuState();
+      return;
+    } else if (touchAction == 1) {
+      // Tap (1-2 taps) - capture
+      shouldCapture = true;
+    }
+    
+    // Perform capture if triggered
+    if (shouldCapture) {
+      shouldCapture = false;
+      camera_fb_t * fb = esp_camera_fb_get();
+      if (fb) {
+        String fileName = path + "/img_" + String(millis()) + ".jpg";
+        File file = SD.open(fileName, FILE_WRITE);
+        if (file) {
+          file.write(fb->buf, fb->len);
+          file.close();
+          counts[classIdx]++;
+          Serial.printf("Saved: %s (Total: %d)\n", fileName.c_str(), counts[classIdx]);
+          myDisplayImageOnOLED(fb, counts[classIdx]);
+          delay(300);
+        }
+        esp_camera_fb_return(fb);
+      }
+    }
+    
+    delay(10);
+  }
+}
+
+// ██████████████████████████████████████████████████████████████████████████████
+// ██                                                                          ██
+// ██  PART 2: TRAINING FUNCTIONS (FORWARD/BACKWARD PASS, OPTIMIZER)           ██
+// ██                                                                          ██
+// ██  DEPENDENCIES (functions called from Part 0):                            ██
+// ██  - myAllocateMemory()                     [Part 0]                       ██
+// ██  - myLoadWeights()                        [Part 0]                       ██
+// ██  - mySaveWeights()                        [Part 0]                       ██
+// ██  - myLoadImageFromFile()                  [Part 0]                       ██
+// ██                                                                          ██
+// ██  VARIABLES USED (defined in Part 0):                                     ██
+// ██  - All neural network weight/gradient buffers                            ██
+// ██  - myClassLabels[3], LEARNING_RATE, BATCH_SIZE, TARGET_EPOCHS            ██
+// ██  - myTrainingData vector, myInputBuffer                                  ██
+// ██  - u8g2 (OLED display object)                                            ██
+// ██                                                                          ██
+// ██████████████████████████████████████████████████████████████████████████████
+
+#ifdef TEST_PART2_STANDALONE
+// Stubs for testing Part 2 standalone
+void myAllocateMemory() {
+  Serial.println("STUB: myAllocateMemory() called - would allocate PSRAM for neural network");
+}
+bool myLoadWeights() {
+  Serial.println("STUB: myLoadWeights() called - would load weights from SD card");
+  return false;
+}
+void mySaveWeights() {
+  Serial.println("STUB: mySaveWeights() called - would save weights to SD card");
+}
+bool myLoadImageFromFile(const char* path, float* buf) {
+  Serial.printf("STUB: myLoadImageFromFile(%s) called - would load and resize image\n", path);
+  return true;
+}
+#endif
+
+// ======================================================
+// FORWARD PASS
+// ======================================================
+void myForwardPass(float* input, float* logits) {
+  // Conv1: INPUT_SIZE x INPUT_SIZE x 3 -> CONV1_OUTPUT_SIZE x CONV1_OUTPUT_SIZE x CONV1_FILTERS
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ob = f*CONV1_OUTPUT_SIZE*CONV1_OUTPUT_SIZE;
+    for(int y=0; y<CONV1_OUTPUT_SIZE; y++) {
+      for(int x=0; x<CONV1_OUTPUT_SIZE; x++) {
+        float sum = 0;
+        for(int ky=0; ky<3; ky++) {
+          for(int kx=0; kx<3; kx++) {
+            int inPos = ((y+ky)*INPUT_SIZE+(x+kx))*3;
+            int wPos = f*27 + ky*9 + kx*3;
+            sum += input[inPos]*myConv1_w[wPos] + 
+                   input[inPos+1]*myConv1_w[wPos+1] + 
+                   input[inPos+2]*myConv1_w[wPos+2];
+          }
+        }
+        myConv1_output[ob + y*CONV1_OUTPUT_SIZE + x] = leaky_relu(clip_value(sum + myConv1_b[f]));
+      }
+    }
+  }
+  
+  // Pool1: CONV1_OUTPUT_SIZE x CONV1_OUTPUT_SIZE -> POOL1_OUTPUT_SIZE x POOL1_OUTPUT_SIZE
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ib=f*CONV1_OUTPUT_SIZE*CONV1_OUTPUT_SIZE, ob=f*POOL1_OUTPUT_SIZE*POOL1_OUTPUT_SIZE;
+    for(int y=0; y<POOL1_OUTPUT_SIZE; y++) {
+      for(int x=0; x<POOL1_OUTPUT_SIZE; x++) {
+        int iy=y*2, ix=x*2;
+        float maxVal = myConv1_output[ib + iy*CONV1_OUTPUT_SIZE + ix];
+        maxVal = max(maxVal, myConv1_output[ib + iy*CONV1_OUTPUT_SIZE + ix+1]);
+        maxVal = max(maxVal, myConv1_output[ib + (iy+1)*CONV1_OUTPUT_SIZE + ix]);
+        maxVal = max(maxVal, myConv1_output[ib + (iy+1)*CONV1_OUTPUT_SIZE + ix+1]);
+        myPool1_output[ob + y*POOL1_OUTPUT_SIZE + x] = maxVal;
+      }
+    }
+  }
+  
+  // Conv2: POOL1_OUTPUT_SIZE x POOL1_OUTPUT_SIZE x CONV1_FILTERS -> CONV2_OUTPUT_SIZE x CONV2_OUTPUT_SIZE x CONV2_FILTERS
+  for(int f=0; f<CONV2_FILTERS; f++) {
+    int ob=f*CONV2_OUTPUT_SIZE*CONV2_OUTPUT_SIZE;
+    for(int y=0; y<CONV2_OUTPUT_SIZE; y++) {
+      for(int x=0; x<CONV2_OUTPUT_SIZE; x++) {
+        float sum = 0;
+        for(int c=0; c<CONV1_FILTERS; c++) {
+          int ib=c*POOL1_OUTPUT_SIZE*POOL1_OUTPUT_SIZE;
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              sum += myPool1_output[ib + (y+ky)*POOL1_OUTPUT_SIZE + (x+kx)] * 
+                     myConv2_w[f*36 + c*9 + ky*3 + kx];
+            }
+          }
+        }
+        myConv2_output[ob + y*CONV2_OUTPUT_SIZE + x] = leaky_relu(clip_value(sum + myConv2_b[f]));
+      }
+    }
+  }
+  
+  // Dense layer
+  for(int c=0; c<NUM_CLASSES; c++) {
+    double sum = 0, comp = 0;
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      double term = myConv2_output[i] * myOutput_w[c*FLATTENED_SIZE + i];
+      double y = term - comp;
+      double t = sum + y;
+      comp = (t - sum) - y;
+      sum = t;
+    }
+    myDense_output[c] = clip_value((float)sum + myOutput_b[c], -50, 50);
+  }
+  
+  // Softmax
+  float mx = max(max(myDense_output[0], myDense_output[1]), myDense_output[2]);
+  float expSum = exp(myDense_output[0]-mx) + exp(myDense_output[1]-mx) + exp(myDense_output[2]-mx);
+  for(int i=0; i<NUM_CLASSES; i++) {
+    logits[i] = myDense_output[i];
+    myDense_output[i] = exp(myDense_output[i]-mx) / expSum;
+  }
+}
+
+// ======================================================
+// BACKWARD PASS
+// ======================================================
+void myBackwardDense(int label) {
+  for(int c=0; c<NUM_CLASSES; c++) {
+    float error = myDense_output[c] - (c==label ? 1.0f : 0.0f);
+    for(int i=0; i<FLATTENED_SIZE; i++) {
+      myOutput_w_grad[c*FLATTENED_SIZE+i] = error * myConv2_output[i];
+      myDense_grad[i] = (c==0) ? error*myOutput_w[c*FLATTENED_SIZE+i] : 
+                                 myDense_grad[i] + error*myOutput_w[c*FLATTENED_SIZE+i];
+    }
+    myOutput_b_grad[c] = error;
+  }
+}
+
+void myBackwardConv2() {
+  for(int i=0; i<FLATTENED_SIZE; i++) {
+    myConv2_grad[i] = myDense_grad[i] * leaky_relu_deriv(myConv2_output[i]);
+  }
+  
+  memset(myConv2_w_grad, 0, CONV2_WEIGHTS*sizeof(float));
+  memset(myConv2_b_grad, 0, CONV2_FILTERS*sizeof(float));
+  memset(myPool1_grad, 0, POOL1_OUTPUT_SIZE*POOL1_OUTPUT_SIZE*CONV1_FILTERS*sizeof(float));
+  
+  for(int f=0; f<CONV2_FILTERS; f++) {
+    int ob=f*CONV2_OUTPUT_SIZE*CONV2_OUTPUT_SIZE;
+    for(int y=0; y<CONV2_OUTPUT_SIZE; y++) {
+      for(int x=0; x<CONV2_OUTPUT_SIZE; x++) {
+        float grad = myConv2_grad[ob+y*CONV2_OUTPUT_SIZE+x];
+        myConv2_b_grad[f] += grad;
+        for(int c=0; c<CONV1_FILTERS; c++) {
+          int ib=c*POOL1_OUTPUT_SIZE*POOL1_OUTPUT_SIZE;
+          for(int ky=0; ky<3; ky++) {
+            for(int kx=0; kx<3; kx++) {
+              int pi = ib+(y+ky)*POOL1_OUTPUT_SIZE+(x+kx);
+              int wi = f*36+c*9+ky*3+kx;
+              myConv2_w_grad[wi] += grad * myPool1_output[pi];
+              myPool1_grad[pi] += grad * myConv2_w[wi];
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void myBackwardPool1() {
+  memset(myConv1_grad, 0, CONV1_OUTPUT_SIZE*CONV1_OUTPUT_SIZE*CONV1_FILTERS*sizeof(float));
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ib=f*CONV1_OUTPUT_SIZE*CONV1_OUTPUT_SIZE, ob=f*POOL1_OUTPUT_SIZE*POOL1_OUTPUT_SIZE;
+    for(int y=0; y<POOL1_OUTPUT_SIZE; y++) {
+      for(int x=0; x<POOL1_OUTPUT_SIZE; x++) {
+        int iy=y*2, ix=x*2;
+        float poolVal = myPool1_output[ob+y*POOL1_OUTPUT_SIZE+x];
+        float grad = myPool1_grad[ob+y*POOL1_OUTPUT_SIZE+x];
+        if(myConv1_output[ib+iy*CONV1_OUTPUT_SIZE+ix] == poolVal) myConv1_grad[ib+iy*CONV1_OUTPUT_SIZE+ix] += grad;
+        if(myConv1_output[ib+iy*CONV1_OUTPUT_SIZE+ix+1] == poolVal) myConv1_grad[ib+iy*CONV1_OUTPUT_SIZE+ix+1] += grad;
+        if(myConv1_output[ib+(iy+1)*CONV1_OUTPUT_SIZE+ix] == poolVal) myConv1_grad[ib+(iy+1)*CONV1_OUTPUT_SIZE+ix] += grad;
+        if(myConv1_output[ib+(iy+1)*CONV1_OUTPUT_SIZE+ix+1] == poolVal) myConv1_grad[ib+(iy+1)*CONV1_OUTPUT_SIZE+ix+1] += grad;
+      }
+    }
+  }
+}
+
+void myBackwardConv1() {
+  for(int i=0; i<CONV1_OUTPUT_SIZE*CONV1_OUTPUT_SIZE*CONV1_FILTERS; i++) {
+    myConv1_grad[i] *= leaky_relu_deriv(myConv1_output[i]);
+  }
+  
+  memset(myConv1_w_grad, 0, CONV1_WEIGHTS*sizeof(float));
+  memset(myConv1_b_grad, 0, CONV1_FILTERS*sizeof(float));
+  
+  for(int f=0; f<CONV1_FILTERS; f++) {
+    int ob=f*CONV1_OUTPUT_SIZE*CONV1_OUTPUT_SIZE;
+    for(int y=0; y<CONV1_OUTPUT_SIZE; y++) {
+      for(int x=0; x<CONV1_OUTPUT_SIZE; x++) {
+        float grad = myConv1_grad[ob+y*CONV1_OUTPUT_SIZE+x];
+        myConv1_b_grad[f] += grad;
+        
+        for(int ky=0; ky<3; ky++) {
+          for(int kx=0; kx<3; kx++) {
+            int inPos = ((y+ky)*INPUT_SIZE+(x+kx))*3;
+            int wPos = f*27 + ky*9 + kx*3;
+            myConv1_w_grad[wPos] += grad * myInputBuffer[inPos];
+            myConv1_w_grad[wPos+1] += grad * myInputBuffer[inPos+1];
+            myConv1_w_grad[wPos+2] += grad * myInputBuffer[inPos+2];
+          }
+        }
+      }
+    }
+  }
+}
+
+// ======================================================
+// OPTIMIZER
+// ======================================================
+void myAdamUpdate(float* w, float* g, float* m, float* v, int size, int step) {
+  float b1=0.9, b2=0.999, eps=1e-8;
+  float lr_t = LEARNING_RATE * sqrt(1-pow(b2,step)) / (1-pow(b1,step));
+  for(int i=0; i<size; i++) {
+    m[i] = b1*m[i] + (1-b1)*g[i];
+    v[i] = b2*v[i] + (1-b2)*g[i]*g[i];
+    w[i] -= lr_t*m[i]/(sqrt(v[i])+eps);
+    w[i] = clip_value(w[i], -10, 10);
+  }
+}
+
+void myUpdateWeights(int step) {
+  myAdamUpdate(myConv1_w, myConv1_w_grad, myConv1_w_m, myConv1_w_v, CONV1_WEIGHTS, step);
+  myAdamUpdate(myConv1_b, myConv1_b_grad, myConv1_b_m, myConv1_b_v, CONV1_FILTERS, step);
+  myAdamUpdate(myConv2_w, myConv2_w_grad, myConv2_w_m, myConv2_w_v, CONV2_WEIGHTS, step);
+  myAdamUpdate(myConv2_b, myConv2_b_grad, myConv2_b_m, myConv2_b_v, CONV2_FILTERS, step);
+  myAdamUpdate(myOutput_w, myOutput_w_grad, myOutput_w_m, myOutput_w_v, OUTPUT_WEIGHTS, step);
+  myAdamUpdate(myOutput_b, myOutput_b_grad, myOutput_b_m, myOutput_b_v, NUM_CLASSES, step);
+}
+
+// ======================================================
+// TRAINING FUNCTION
+// ======================================================
+
+
+void myActionTrain() {
+  Serial.println("\n>>> Training mode");
+  Serial.println("Instructions:");
+  Serial.println("  During training: 3+ taps = Save and exit");
+  Serial.println("  After completion: TAP = Train again, 3+ taps = Exit");
+  Serial.println("  Serial: 'T'=train again, 'L'=exit");
+  
+  myResetTouchState();  // Clear touch state when entering
+
+  u8g2.firstPage();
+  do {
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(0, 12, "TRAINING MODE");
+    u8g2.drawStr(0, 24, "Loading...");
+  } while (u8g2.nextPage());
+  
+  if (myLoadWeights()) {
+    Serial.println("Continuing from saved weights");
+  } else {
+    myAllocateMemory();
+    Serial.println("Starting fresh training");
+  }
+
+  while (true) {
+    // Load training data
+    myTrainingData.clear();
+    for(int i=0; i<3; i++) {
+      File root = SD.open("/images/" + myClassLabels[i]);
+      if (root) {
+        while(File file = root.openNextFile()) {
+          if(!file.isDirectory()) {
+            String fn = String(file.name());
+            if(fn.endsWith(".jpg") || fn.endsWith(".JPG")) {
+              myTrainingData.push_back({file.path(), i});
+            }
+          }
+          file.close();
+        }
+        root.close();
+      }
+    }
+    
+    if(myTrainingData.empty()) { 
+      u8g2.firstPage();
+      do { u8g2.drawStr(0, 20, "No Images!"); } while (u8g2.nextPage());
+      delay(2000);
+      myResetMenuState();
+      return; 
+    }
+
+    int total = myTrainingData.size();
+    int batchesPerEpoch = (total + BATCH_SIZE - 1) / BATCH_SIZE;
+    int totalBatches = TARGET_EPOCHS * batchesPerEpoch;
+    
+    Serial.printf("Training: %d images, %d batches\n", total, totalBatches);
+    
+    // Training loop
+    std::vector<int> indices;
+    for(int i=0; i<total; i++) indices.push_back(i);
+    
+    float runningLoss = 0;
+    int lossCount = 0;
+    
+    for(int batch=0; batch<totalBatches; batch++) {
+      // Check for exit during training
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 'x' || c == 'X') {
+          Serial.println("Stopping training...");
+          mySaveWeights();
+          myResetMenuState();
+          return;
+        }
+      }
+      
+      // Touch input during training - check in background
+      myCheckTouchBackground();  // Update touch state without blocking
+      if (myPeekTouchAction() == 2) {
+        myCheckTouchInput();  // Consume the action
+        Serial.println("Long press - stopping training");
+        mySaveWeights();
+        myResetMenuState();
+        return;
+      }
+      
+      // Shuffle at epoch start
+      if(batch % batchesPerEpoch == 0) {
+        int epoch = batch/batchesPerEpoch + 1;
+        Serial.printf("\n--- Epoch %d/%d ---\n", epoch, TARGET_EPOCHS);
+        for(int i=total-1; i>0; i--) {
+          int j = random(i+1);
+          int tmp = indices[i];
+          indices[i] = indices[j];
+          indices[j] = tmp;
+        }
+      }
+      
+      int batchStart = (batch % batchesPerEpoch) * BATCH_SIZE;
+      int batchEnd = min(batchStart + BATCH_SIZE, total);
+      
+      float batchLoss = 0;
+      int correctCount = 0;
+      
+      // Train on batch
+      for(int i=batchStart; i<batchEnd; i++) {
+        int idx = indices[i];
+        TrainingItem& img = myTrainingData[idx];
+        
+        if(!myLoadImageFromFile(img.path.c_str(), myInputBuffer)) continue;
+        
+        float logits[3];
+        myForwardPass(myInputBuffer, logits);
+        
+        float loss = -log(max(myDense_output[img.label], 1e-7f));
+        batchLoss += loss;
+        
+        int pred = 0;
+        for(int j=1; j<3; j++) if(myDense_output[j] > myDense_output[pred]) pred = j;
+        if(pred == img.label) correctCount++;
+        
+        myBackwardDense(img.label);
+        myBackwardConv2();
+        myBackwardPool1();
+        myBackwardConv1();
+        
+        // Update touch state during heavy computation
+        if (i % 3 == 0) myCheckTouchBackground();
+      }
+      
+      myUpdateWeights(batch+1);
+      
+      float avgLoss = batchLoss / (batchEnd - batchStart);
+      float batchAcc = (float)correctCount / (batchEnd - batchStart);
+      runningLoss += avgLoss;
+      lossCount++;
+      
+      // Update display
+      if((batch+1) % 5 == 0) {
+        float displayLoss = runningLoss / lossCount;
+        u8g2.firstPage();
+        do {
+          u8g2.setFont(u8g2_font_6x10_tf);
+          u8g2.setCursor(0, 12); u8g2.print("Training...");
+          u8g2.setCursor(0, 24); 
+          u8g2.print("B:"); u8g2.print(batch+1); 
+          u8g2.print("/"); u8g2.print(totalBatches);
+          u8g2.setCursor(0, 36); 
+          u8g2.print("L:"); u8g2.print(displayLoss, 3);
+          u8g2.print(" A:"); u8g2.print((int)(batchAcc*100)); u8g2.print("%");
+        } while (u8g2.nextPage());
+        runningLoss = 0;
+        lossCount = 0;
+      }
+      
+      if((batch+1) % 10 == 0) {
+        Serial.printf("Batch %d/%d - Loss: %.4f - Acc: %.1f%%\n", 
+                     batch+1, totalBatches, avgLoss, batchAcc*100);
+      }
+    }
+    
+    Serial.println("\n--- Training Complete ---");
+    mySaveWeights();
+
+    u8g2.firstPage();
+    do { 
+      u8g2.drawStr(0, 12, "DONE!");
+      u8g2.drawStr(0, 24, "Tap:Again");
+      u8g2.drawStr(0, 36, "3+Taps:Exit");
+    } while (u8g2.nextPage());
+
+    myResetTouchState();  // Clear touch state before waiting for input
+    
+    // Wait for user decision - ACTIVE MONITORING
+    Serial.println("Waiting for input (tap or 3+ taps)...");
+    while (true) {
+      if (Serial.available()) {
+        char c = Serial.read();
+        if (c == 'x' || c == 'X') {
+          myResetMenuState();
+          return;
+        } else if (c == 't' || c == 'T') {
+          break; // Train again
+        }
+      }
+      
+      // Actively monitor touch in tight loop
+      int touchAction = myCheckTouchInput();
+      if (touchAction == 2) {
+        // Long press - exit
+        myResetMenuState();
+        return;
+      } else if (touchAction == 1) {
+        // Tap - train again
+        Serial.println("Starting new training cycle");
+        break;
+      }
+      delay(10);  // Keep this small for responsiveness
+    }
+  }
+}
+
+
+// ██████████████████████████████████████████████████████████████████████████████
+// ██                                                                          ██
+// ██  PART 3: INFERENCE FUNCTION - OPTIMIZED                                  ██
+// ██                                                                          ██
+// ██  DEPENDENCIES (functions called from Part 0):                            ██
+// ██  - myLoadWeights()                        [Part 0]                       ██
+// ██  - myForwardPass()                        [Part 2]                       ██
+// ██  - myRgbBuffer (global, allocated in setup)                              ██
+// ██                                                                          ██
+// ██  VARIABLES USED (defined in Part 0):                                     ██
+// ██  - myInputBuffer, myDense_output (probabilities)                         ██
+// ██  - myClassLabels[3], myThresholdPress                                    ██
+// ██  - u8g2 (OLED display object)                                            ██
+// ██                                                                          ██
+// ██████████████████████████████████████████████████████████████████████████████
+
+#ifdef TEST_PART3_STANDALONE
+// Stubs for testing Part 3 standalone
+bool myLoadWeights() {
+  Serial.println("STUB: myLoadWeights() called - would load weights from SD card");
+  return true;
+}
+void myForwardPass(float* input, float* logits) {
+  Serial.println("STUB: myForwardPass() called - would run neural network inference");
+  // Fake some output for testing
+  if(myDense_output) {
+    myDense_output[0] = 0.1;
+    myDense_output[1] = 0.7;
+    myDense_output[2] = 0.2;
+  }
+}
+#endif
+
+
+void myActionInfer() {
+  Serial.println("\n>>> Inference mode - OPTIMIZED");
+  Serial.println("Instructions:");
+  Serial.println("  T or L exit to menu");
+
+  
+  myResetTouchState();  // Clear touch state when entering
+  
+  if (!myLoadWeights()) {
+    u8g2.firstPage();
+    do { u8g2.drawStr(0, 15, "NOT TRAINED!"); } while (u8g2.nextPage());
+    delay(2000);
+    myResetMenuState();
+    return;
+  }
+  
+  // Pre-compute resize lookup tables (done once per call)
+  // INPUT_SIZE is a runtime value (myCfg.inputSize), so we use heap allocation
+  int* sy_lookup = (int*)ps_malloc(myCfg.inputSize * sizeof(int));
+  int* sx_lookup = (int*)ps_malloc(myCfg.inputSize * sizeof(int));
+  if (!sy_lookup || !sx_lookup) {
+    Serial.println("ERROR: Failed to allocate lookup tables!");
+    if (sy_lookup) free(sy_lookup);
+    if (sx_lookup) free(sx_lookup);
+    myResetMenuState();
+    return;
+  }
+  for(int i=0; i<INPUT_SIZE; i++) {
+    sy_lookup[i] = min((int)((i+0.5)*240.0/INPUT_SIZE), 239);
+    sx_lookup[i] = min((int)((i+0.5)*240.0/INPUT_SIZE), 239);
+  }
+  Serial.println("Resize lookup tables initialized");
+  
+  // Timing arrays for 10-frame batches
+  unsigned long frameTimes[10];
+  int frameIndex = 0;
+  int pred = 0;  // Store prediction outside loop for printing
+  
+  while (true) {
+    unsigned long frameStart = millis();
+    
+    // Serial input check (fast, every frame)
+    if (Serial.available()) {
+      char c = Serial.read();
+      if (c == 't' || c == 'T' || c == 'l' || c == 'L') {
+        free(sy_lookup); free(sx_lookup);
+        myResetMenuState();
+        return;
+      }
+    }
+    
+    // Get camera frame
+    camera_fb_t * fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera frame failed - retrying");
+      delay(10);
+      continue;
+    }
+    
+    // Check if RGB buffer is allocated
+    if (!myRgbBuffer) {
+      Serial.println("ERROR: myRgbBuffer not allocated!");
+      esp_camera_fb_return(fb);
+      delay(10);
+      continue;
+    }
+    
+    // Convert JPEG to RGB (reusing pre-allocated buffer)
+    if (fmt2rgb888(fb->buf, fb->len, PIXFORMAT_JPEG, myRgbBuffer)) {
+      
+      // Optimized resize using lookup tables
+      for(int y=0; y<INPUT_SIZE; y++) {
+        int sy = sy_lookup[y];
+        int sy_offset = sy * 240;
+        int dst_y_offset = y * INPUT_SIZE;
+        
+        for(int x=0; x<INPUT_SIZE; x++) {
+          int srcIdx = (sy_offset + sx_lookup[x]) * 3;
+          int dstIdx = (dst_y_offset + x) * 3;
+          myInputBuffer[dstIdx] = myRgbBuffer[srcIdx] * 0.003921569f;      // /255.0
+          myInputBuffer[dstIdx+1] = myRgbBuffer[srcIdx+1] * 0.003921569f;
+          myInputBuffer[dstIdx+2] = myRgbBuffer[srcIdx+2] * 0.003921569f;
+        }
+      }
+      
+      // Run inference
+      float myLogits[3];
+      myForwardPass(myInputBuffer, myLogits);
+      
+      // Find prediction
+      pred = 0;
+      for(int i=1; i<3; i++) {
+        if(myDense_output[i] > myDense_output[pred]) pred = i;
+      }
+    }
+    
+    esp_camera_fb_return(fb);
+    
+    // Record frame timing
+    frameTimes[frameIndex] = millis() - frameStart;
+    float fps2 = 1000.0 / frameTimes[frameIndex];
+    Serial.printf("Frame %d: %lu ms (%.1f FPS) ", frameIndex+1, frameTimes[frameIndex], fps2);
+    frameIndex++;
+    Serial.printf("Current Pred: %s (%.1f%%) | All: %.0f%% %.0f%% %.0f%%\n", 
+                   myClassLabels[pred].c_str(), myDense_output[pred]*100,
+                   myDense_output[0]*100, myDense_output[1]*100, myDense_output[2]*100);
+   
+    // Every 10th frame: do expensive operations
+    if (frameIndex >= 10) {
+      
+      // 1. Update OLED display
+      u8g2.firstPage();
+      do {
+        u8g2.setFont(u8g2_font_6x10_tf);
+        u8g2.drawStr(0, 12, "RESULT:");
+        u8g2.setFont(u8g2_font_7x14_tf);
+        u8g2.drawStr(0, 28, myClassLabels[pred].c_str());
+        u8g2.setFont(u8g2_font_5x7_tf);
+        u8g2.setCursor(0, 38);
+        u8g2.print((int)(myDense_output[pred] * 100)); 
+        u8g2.print("%");
+      } while (u8g2.nextPage());
+      
+
+/*
+      // 2. Print all 10 frame timings
+      Serial.println("\n=== Last 10 Frames ===");
+      for (int i = 0; i < 10; i++) {
+        float fps = 1000.0 / frameTimes[i];
+        Serial.printf("Frame %d: %lu ms (%.1f FPS)\n", i+1, frameTimes[i], fps);
+      }
+      Serial.printf("Current Pred: %s (%.1f%%) | All: %.0f%% %.0f%% %.0f%%\n\n", 
+                   myClassLabels[pred].c_str(), myDense_output[pred]*100,
+                   myDense_output[0]*100, myDense_output[1]*100, myDense_output[2]*100);
+
+*/
+
+      
+      // 3. Check for touch to exit (simplified)
+      int touchVal = myReadTouch();
+      if (touchVal > myThresholdPress) {
+        Serial.println("Touch detected - exiting inference");
+        delay(200);  // Brief debounce
+        free(sy_lookup); free(sx_lookup);
+        myResetMenuState();
+        return;
+      }
+      
+      // Reset frame counter
+      frameIndex = 0;
+    }
+  }
+}
+
+
+// ██████████████████████████████████████████████████████████████████████████████
+// ██                                                                          ██
+// ██  PART 4: MENU SYSTEM FUNCTIONS                                           ██
+// ██                                                                          ██
+// ██  DEPENDENCIES (functions called from Part 0):                            ██
+// ██  - myActionCollect(int classIdx)          [Part 1]                       ██
+// ██  - myActionTrain()                        [Part 2]                       ██
+// ██  - myActionInfer()                        [Part 3]                       ██
+// ██                                                                          ██
+// ██  VARIABLES USED (defined in Part 0):                                     ██
+// ██  - myClassLabels[3]                                                      ██
+// ██  - myTotalItems, myThresholdPress, myThresholdRelease                    ██
+// ██  - myScreenTimeout                                                       ██
+// ██  - myLastActivityTime, myLastTapTime, myTapCooldown                      ██
+// ██  - myIsTouching, myLongPressTriggered, myMenuIndex, myIsSelected         ██
+// ██  - u8g2 (OLED display object)                                            ██
+// ██                                                                          ██
+// ██  NOTE: This part is called from loop() in Part 0                         ██
+// ██                                                                          ██
+// ██████████████████████████████████████████████████████████████████████████████
+
+
+#ifdef TEST_PART4_STANDALONE
+void myActionCollect(int classIdx) {
+  Serial.printf("STUB: myActionCollect(%d) called - would collect images for class %s\n", 
+                classIdx, myClassLabels[classIdx].c_str());
+  delay(1000);
+  myResetMenuState();
+}
+
+void myActionTrain() {
+  Serial.println("STUB: myActionTrain() called - would train the neural network");
+  delay(1000);
+  myResetMenuState();
+}
+
+void myActionInfer() {
+  Serial.println("STUB: myActionInfer() called - would run inference on camera feed");
+  delay(1000);
+  myResetMenuState();
+}
+#endif
+
+void myResetMenuState() {
+  myIsSelected = false;
+  myResetTouchState();  // Use unified touch reset
+  myLastActivityTime = millis();
+  myDrawMenu();
+}
+
+void myDrawMenu() {
+  // ===== SERIAL MENU =====
+  Serial.println("\n=== MENU ===");
+  for (int i = 1; i <= myTotalItems; i++) {
+    String label =
+      (i <= 3) ? myClassLabels[i - 1] :
+      (i == 4) ? "Train" : "Infer";
+
+    if (i == myMenuIndex) Serial.print(" > ");
+    else                 Serial.print("   ");
+
+    Serial.printf("%d. %s\n", i, label.c_str());
+  }
+  Serial.println("Commands: t=next (tap)  l=select (longpress)");
+
+  // ===== OLED MENU =====
+  u8g2.firstPage();
+  do {
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(0, 8, "TAP:Next HOLD:Ok");
+
+    int myStartItem = (myMenuIndex <= 3) ? 1 : myMenuIndex - 2;
+
+    for (int i = 0; i < 3; i++) {
+      int cur = myStartItem + i;
+      if (cur > myTotalItems) break;
+
+      String label =
+        (cur <= 3) ? myClassLabels[cur - 1] :
+        (cur == 4) ? "Train" : "Infer";
+
+      int y = 18 + i * 9;
+      if (cur == myMenuIndex)
+        u8g2.drawStr(0, y, ("> " + label).c_str());
+      else
+        u8g2.drawStr(0, y, ("  " + label).c_str());
+    }
+  } while (u8g2.nextPage());
+}
+
+void myHandleMenuNavigation() {
+  unsigned long myCurrentMillis = millis();
+
+  // --------------------------------------------------------------------------
+  // SERIAL INPUT
+  // --------------------------------------------------------------------------
+  if (!myIsSelected && Serial.available()) {
+    char c = Serial.read();
+
+    if (c >= '1' && c <= '5') {
+      int newIndex = c - '0';
+      if (newIndex <= myTotalItems) {
+        myMenuIndex = newIndex;
+        myIsSelected = true;
+        myLastActivityTime = myCurrentMillis;
+
+        if (myMenuIndex == 1) myActionCollect(0);
+        else if (myMenuIndex == 2) myActionCollect(1);
+        else if (myMenuIndex == 3) myActionCollect(2);
+        else if (myMenuIndex == 4) myActionTrain();
+        else if (myMenuIndex == 5) myActionInfer();
+      }
+    }
+    else if (c == 't' || c == 'T') {
+      if (myCurrentMillis - myLastTapTime > myTapCooldown) {
+        myMenuIndex++;
+        if (myMenuIndex > myTotalItems) myMenuIndex = 1;
+        myDrawMenu();
+        myLastTapTime = myCurrentMillis;
+        myLastActivityTime = myCurrentMillis;
+      }
+    }
+    else if (c == 'l' || c == 'L') {
+      myIsSelected = true;
+      myLastActivityTime = myCurrentMillis;
+
+      if (myMenuIndex == 1) myActionCollect(0);
+      else if (myMenuIndex == 2) myActionCollect(1);
+      else if (myMenuIndex == 3) myActionCollect(2);
+      else if (myMenuIndex == 4) myActionTrain();
+      else if (myMenuIndex == 5) myActionInfer();
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // TOUCH INPUT - NOW USING UNIFIED SYSTEM
+  // --------------------------------------------------------------------------
+  if (!myIsSelected) {
+    int touchAction = myCheckTouchInput();
+    
+    if (touchAction == 1) {
+      // Tap detected - advance menu
+      if (myCurrentMillis - myLastTapTime > myTapCooldown) {
+        myMenuIndex++;
+        if (myMenuIndex > myTotalItems) myMenuIndex = 1;
+        myDrawMenu();
+        myLastTapTime = myCurrentMillis;
+        myLastActivityTime = myCurrentMillis;
+      }
+    }
+    else if (touchAction == 2) {
+      // Long press detected - select menu item
+      myIsSelected = true;
+      myLastActivityTime = myCurrentMillis;
+
+      if (myMenuIndex == 1) myActionCollect(0);
+      else if (myMenuIndex == 2) myActionCollect(1);
+      else if (myMenuIndex == 3) myActionCollect(2);
+      else if (myMenuIndex == 4) myActionTrain();
+      else if (myMenuIndex == 5) myActionInfer();
+    }
+  }
+}
