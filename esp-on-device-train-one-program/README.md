@@ -58,3 +58,8 @@ Memory Fragmentation: The code uses ps_malloc to allocate many small buffers. Wh
 
 Touch Sensor Debouncing: The touch logic at A0 is based on raw analogRead values with basic delays. A more robust software debounce or a state-machine-based touch handler would make the menu navigation feel more responsive and less prone to accidental triggers.
 
+
+You can train on any 3 objects but this image is what I am using
+
+<img width="212" height="276" alt="trainer02" src="https://github.com/user-attachments/assets/0a24fb3f-a984-46fb-9f0b-6535ff1a29b1" />
+
