@@ -63,3 +63,8 @@ You can train on any 3 objects but this image is what I am using
 
 <img width="212" height="276" alt="trainer02" src="https://github.com/user-attachments/assets/0a24fb3f-a984-46fb-9f0b-6535ff1a29b1" />
 
+
+
+<img width="212" height="276" alt="trainer03" src="https://github.com/user-attachments/assets/a4d697fb-4178-4151-abf9-ebdae25d1874" />
+
+
