@@ -107,29 +107,6 @@ Export: Once the AI is performing well, use the "Export .h" button to save the "
 <br><br><br><br><br><br><br><br><br><br><br><br><br><br>
 
 
-### Presently working on: and not fully tested.
-
-
-
-Issues: [torchjs75gpt.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs75gpt.html)
-
-
-
-
-
-Issues: [torchjs76claude.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs76claude.html) 
-
-Issues: [torchjs78claude.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs78claude.html) 
-
-## What is interesting
-(The bug is the generated code from the webpage is not working on the esp32s3 and I want the resolution of both cameras to be user decided. Default 64x64 RGB)
-
-Interesting: [torchjs78gemini.html](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/torchjs78gemini.html)
-
-
-
-Super Interesting is the latest single file code for all image loading training and inference. The trick here is that the images are fairly small 64 x 64 is the default. [esp-on-device-train-one-program/esp-all-menu-A0-image-train-infer21.txt](https://hpssjellis.github.io/my-examples-of-tensorflowjs-for-tinytorch/esp-on-device-train-one-program/esp-all-menu-A0-image-train-infer21.txt)
-
 It's a process!
 
 <h2>By Jeremy Ellis, Use at your own Risk</h2>
