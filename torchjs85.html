@@ -1,0 +1,1630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>XIAO ML Kit — TorchJS v83</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+
+<h1>XIAO ML Kit — TorchJS v83</h1>
+<p>Train a CNN in the browser · Export weights to ESP32 SD card · WebSerial ESP32 camera capture</p>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SECTION 1 — CAMERA & DATA COLLECTION
+═══════════════════════════════════════════════════════════════════ -->
+<div id="myCodeSpace">
+
+<h2>1 · Camera &amp; Data Collection</h2>
+
+<label>
+  <input type="checkbox" id="myGrayscaleToggle" onchange="myCheckGrayscaleChange()">
+  Use Grayscale Mode
+</label>
+<p>Set BEFORE starting — 3x smaller model, needs more data</p>
+
+<br>
+
+<label>Input Resolution:</label>
+<select id="myResolutionSelect" onchange="myOnResolutionSelect()">
+  <option value="64">64x64 (~6 FPS)</option>
+  <option value="96">96x96 (~2.3 FPS)</option>
+  <option value="112">112x112 (~1.7 FPS)</option>
+  <option value="128">128x128 (~1.3 FPS)</option>
+  <option value="144">144x144 (~1.0 FPS)</option>
+  <option value="160">160x160 (~0.9 FPS)</option>
+  <option value="192">192x192 (~0.6 FPS)</option>
+  <option value="240">240x240 (~0.4 FPS)</option>
+  <option value="custom">Custom...</option>
+</select>
+<input type="number" id="myResolutionCustom" value="64" min="8" max="240" step="2"
+       style="display:none;" onchange="myOnResolutionCustom()">
+<br>
+<div id="myResolutionHint">Training resolution: 64x64 — conv2 out: 29x29</div>
+
+<br>
+
+<label>Camera:</label>
+<select id="myCameraSelect" title="Select webcam or ESP32 camera via WebSerial"></select>
+
+<br><br>
+
+<video id="myVideo1" width="240" height="240" autoplay playsinline></video>
+<canvas id="myCanvas1" width="240" height="240" style="display:none;"></canvas>
+<canvas id="myEspCanvas" width="240" height="240" style="display:none;" title="ESP32 Live Preview"></canvas>
+
+<br><br>
+
+<button id="myStartBtn" onclick="myStartAll()">Start Camera &amp; Brain</button>
+<button id="myStopCameraBtn" onclick="myStopCamera()" style="display:none;">Stop Camera</button>
+
+<br><br>
+
+<label>Max Buffer per class:</label>
+<input type="number" id="myMaxBufferInput" value="100" min="10" max="500" onchange="myUpdateMaxBuffer()">
+<p>Higher = more memory</p>
+
+<br>
+
+<button onclick="mySaveModel()">Save TFJS Model</button>
+<button onclick="myLoadModel()">Load TFJS Model</button>
+
+<br><br>
+
+<button onclick="mySaveAllImages()">Save ALL Classes to images.zip</button>
+
+<br><br>
+
+<b>Class 0:</b><br>
+<button onclick="myCollect(0)">Capture 0</button>
+<button onclick="myLoadImages(0)">Load</button>
+<button onclick="mySaveImages(0)">Save ZIP</button>
+<button onclick="myClearImages(0)">Clear</button>
+<br>
+<input type="text" id="myLabel0" value="0Blank">
+<div id="myCount0">0 samples</div>
+
+<br>
+
+<b>Class 1:</b><br>
+<button onclick="myCollect(1)">Capture 1</button>
+<button onclick="myLoadImages(1)">Load</button>
+<button onclick="mySaveImages(1)">Save ZIP</button>
+<button onclick="myClearImages(1)">Clear</button>
+<br>
+<input type="text" id="myLabel1" value="1Circle">
+<div id="myCount1">0 samples</div>
+
+<br>
+
+<b>Class 2:</b><br>
+<button onclick="myCollect(2)">Capture 2</button>
+<button onclick="myLoadImages(2)">Load</button>
+<button onclick="mySaveImages(2)">Save ZIP</button>
+<button onclick="myClearImages(2)">Clear</button>
+<br>
+<input type="text" id="myLabel2" value="2Square">
+<div id="myCount2">0 samples</div>
+
+<p>Save = per-class ZIP · Save ALL = one ZIP with all 3 folders for SD card /images/ClassName/</p>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SECTION 2 — WEBSERIAL ESP32 PANEL
+═══════════════════════════════════════════════════════════════════ -->
+
+<h2>2 · ESP32 WebSerial</h2>
+
+<p>Connect your XIAO ESP32S3 Sense via USB · requires Chrome/Edge · USB CDC On Boot: Enabled</p>
+
+<div id="mySerialStatus">Not Connected</div>
+
+<br>
+
+<button onclick="myConnectSerial()">Connect ESP32</button>
+<button onclick="myDisconnectSerial()">Disconnect</button>
+
+<br><br>
+
+<label>Send command:</label>
+<input type="text" id="mySerialCmd" placeholder="t, l, 1-5 ...">
+<button onclick="mySendSerial()">Send</button>
+<br>
+<small>
+  <button onclick="mySendSerialChar('t')" title="Next menu item">t=Next</button>
+  <button onclick="mySendSerialChar('l')" title="Select menu item">l=Select</button>
+  <button onclick="mySendSerialChar('1')">1</button>
+  <button onclick="mySendSerialChar('2')">2</button>
+  <button onclick="mySendSerialChar('3')">3</button>
+  <button onclick="mySendSerialChar('4')">4=Train</button>
+  <button onclick="mySendSerialChar('5')">5=Infer</button>
+</small>
+
+<br><br>
+
+<b>Capture from ESP32 Camera</b><br>
+<p>ESP32 sends JPEG frames over Serial when you request them.</p>
+
+<canvas id="myEspPreview" width="240" height="180" style="border:1px solid black; background:#000; display:block;"></canvas>
+
+<br>
+
+<button onclick="myRequestEspFrame()">Request Frame</button>
+<button id="myEspAutoBtn" onclick="myToggleEspAuto()">Auto Capture</button>
+<br><br>
+<label>Add to class:</label>
+<select id="myEspCaptureClass">
+  <option value="0">Class 0</option>
+  <option value="1">Class 1</option>
+  <option value="2">Class 2</option>
+</select>
+<button onclick="myAddEspFrameToClass()">Add Last Frame to Class</button>
+
+<br><br>
+
+<b>Serial Monitor</b><br>
+<div id="mySerialLog" style="height:140px; overflow-y:auto; font-family:monospace; background:#eee; padding:4px; font-size:0.85em;">Serial output will appear here...</div>
+<button onclick="document.getElementById('mySerialLog').innerHTML=''">Clear Log</button>
+<label>
+  <input type="checkbox" id="mySerialAutoScroll" checked> Auto-scroll
+</label>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SECTION 3 — TRAINING PROGRESS
+═══════════════════════════════════════════════════════════════════ -->
+
+<h2>3 · Training Progress</h2>
+
+Batches Trained: <span id="myEpochDisplay">0</span><br>
+Min Samples: <input type="number" id="myMinSamples" value="10" min="1" max="100">
+
+<br><br>
+
+<label>
+  <input type="checkbox" id="myUseAllData" checked onchange="myToggleEpochMode()"> Use All Data (systematic epochs)
+</label>
+
+<br>
+
+<div id="myEpochControls">
+  <label>Target Epochs:</label>
+  <input type="number" id="myTargetEpochs" value="10" min="0" step="0.5">
+  <p id="myEpochHint"></p>
+</div>
+<div id="myBatchControls" style="display:none;">
+  <label>Max Batches:</label>
+  <input type="number" id="myMaxBatches" value="40" min="0">
+</div>
+
+<br>
+
+<label>Batch Size:</label>
+<input type="number" id="myBatchSize" value="6" min="3" max="30" step="3">
+<br>
+<label>Learning Rate:</label>
+<input type="number" id="myLearningRate" value="0.001" min="0.00001" max="0.1" step="0.0001">
+<br>
+<label>Dropout Rate:</label>
+<input type="number" id="myDropoutRate" value="0.3" min="0.0" max="0.9" step="0.1">
+
+<br><br>
+
+Avg Loss: <span id="myLossDisplay">--</span><br>
+Status: <span id="myStatusDisplay">Waiting...</span>
+
+<br><br>
+
+<button id="myPauseBtn" onclick="myPauseTraining()" disabled>Pause</button>
+<button id="myResumeBtn" onclick="myResumeTraining()" style="display:none;">Resume</button>
+
+<br>
+<div id="myProgressBarWrap" style="height:10px; background:#ccc;">
+  <div id="myProgressBar" style="height:100%; background:green; width:0%;"></div>
+</div>
+
+<br>
+
+<div id="myOutputDisplay">Ready...</div>
+
+<br>
+
+<button id="myStopAnalysisBtn" onclick="myStopAnalysis()" disabled>Stop Analysis</button>
+<button id="myStartAnalysisBtn" onclick="myStartAnalysis()" style="display:none;">Start Analysis</button>
+<br>
+<button onclick="myDebugCurrentFrame()">Debug Current Frame</button>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SECTION 4 — ESP32 EXPORT
+═══════════════════════════════════════════════════════════════════ -->
+
+<h2>4 · ESP32 Export (v57 SD Format)</h2>
+
+<p>Exports weights + config for the XIAO ESP32S3 Sense. Copy files to SD card /header/ folder.</p>
+
+<label>Firmware Version:</label>
+<input type="number" id="myBinVersion" value="50" min="1" onchange="myRefreshConfigTextarea()">
+
+<br><br>
+
+<label>
+  <input type="checkbox" id="myExportAugmentation" onchange="myRefreshConfigTextarea()"> useAugmentation (flip + brightness on ESP32)
+</label><br>
+<label>
+  <input type="checkbox" id="myExportGrayscale" onchange="myRefreshConfigTextarea()"> useGrayscale (must match model colour mode)
+</label><br>
+<label>
+  <input type="checkbox" id="myExportImagesToPsram" checked onchange="myRefreshConfigTextarea()"> imagesToPsram [v57]
+</label><br>
+<label>validationImages [v57]:</label>
+<input type="number" id="myExportValidationImages" value="3" min="0" max="20" onchange="myRefreshConfigTextarea()">
+<p>imagesToPsram = preload all training images to PSRAM before training. validationImages = last N images per class held out for validation.</p>
+
+<br>
+
+<button onclick="myExportBin()">Export myWeights.bin to SD /header/</button>
+<p>Binary: JSON header + float32 weights. Copy to /header/myWeights.bin on SD card.</p>
+
+<br>
+
+<b>config.json — Direct Download</b><br>
+<p>Live textarea — edit freely before saving. Syncs from fields above.</p>
+<textarea id="myConfigTextarea" rows="22" cols="60" spellcheck="false"></textarea>
+<br>
+<button onclick="myExportConfigJson()">Save config.json to Downloads</button>
+<p>Copy to SD card /header/config.json</p>
+
+<br>
+
+<b>GENERATE .h Header File — Legacy / Optional</b><br>
+<p>For older firmware that reads weights from a compiled-in C header instead of the SD card.</p>
+<label>Use Int8: <input type="checkbox" id="myInt8Toggle"></label>
+<label>Name: <input type="text" id="myExportName" value="myModel"> .h</label>
+<br>
+<button onclick="myExportHeader()">Generate .h Header</button>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SECTION 5 — ACTIVITY LOG
+═══════════════════════════════════════════════════════════════════ -->
+
+<h2>5 · Activity Log</h2>
+
+<div id="myDivHistory" style="height:280px; overflow-y:auto; font-family:monospace; background:#eee; padding:8px; font-size:0.85em;">Logs will appear here...</div>
+<button onclick="document.getElementById('myDivHistory').innerHTML=''">Clear Log</button>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SECTION 6 — SOURCE CODE EDITOR
+═══════════════════════════════════════════════════════════════════ -->
+
+<h2>6 · View / Edit Source Code</h2>
+
+<button onclick="myToggleEditor()">Toggle Source Code Editor</button>
+<button id="myUpdateBtn" style="display:none;" onclick="myApplyAndRun()">Update &amp; Run</button>
+<br>
+<textarea id="myTextarea1" wrap="off" rows="2" style="width:98%; font-family:monospace; display:none; resize:vertical;"></textarea>
+
+</div><!-- /myCodeSpace -->
+
+<br><hr><br>
+
+<p>
+  By <a href="https://github.com/hpssjellis">Jeremy Ellis (hpssjellis)</a> ·
+  <a href="https://www.linkedin.com/in/jeremy-ellis-4237a9bb/">LinkedIn</a> ·
+  <a href="https://opencollective.com/mlsysbook">Support opencollective/mlsysbook</a> ·
+  <a href="https://www.seeedstudio.com/The-XIAOML-Kit.html">XIAO ML Kit $22 USD</a>
+  · Use at your own risk · MIT
+</p>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 1 — STATE VARIABLES
+     All global variables that track the app state across functions.
+     These are declared here so every script section below can access them.
+     ─────────────────────────────────────────────────────────────────
+     myModel          - the TensorFlow.js neural network model
+     myTimer          - the interval timer running the training loop
+     myTrainData      - processed tensors for training, keyed by class 0/1/2
+     myRawData        - raw 240x240 ImageData frames, keyed by class
+     myMaxBuffer      - max samples per class before oldest is dropped
+     myEpochCount     - total batch count since start
+     myIsGrayscaleMode - true when grayscale mode is active
+     myInputSize      - pixel size of the square input (e.g. 64 = 64x64)
+     mySerialPort/Reader/Writer - WebSerial connection handles
+     myEspLastFrame   - last JPEG frame received from ESP32
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────
+var myModel, myTimer, myLastID = -1;
+var myTrainData = {0:[], 1:[], 2:[]};
+var myRawData   = {0:[], 1:[], 2:[]};
+var myMaxBuffer = 100;
+var myEpochCount = 0;
+var myLossHistory = [];
+var myLossSum = 0, myLossCount = 0;
+var myTrainingPaused = false;
+var myAnalysisStopped = false;
+var myIsGrayscaleMode = false;
+var myGrayscaleRenderTimer = null;
+var myAllDataIndex = 0;
+var myCurrentEpoch = 0;
+var myShuffledData = [];
+var myCameraStopped = false;
+var myInputSize = 64;
+
+// WebSerial state
+var mySerialPort = null;
+var mySerialReader = null;
+var mySerialWriter = null;
+var mySerialReadLoop = null;
+var mySerialBuffer = '';
+var mySerialConnected = false;
+var myEspLastFrame = null;
+var myEspAutoCapture = false;
+var myEspAutoTimer = null;
+var myEspReceivingJpeg = false;
+var myEspJpegBytes = [];
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 2 — RESOLUTION HELPERS
+     Functions that handle the input resolution selector.
+     myGetConv2Out(sz) calculates the output size after 2 conv+pool layers.
+     myUpdateResolutionHint() updates the info text below the selector.
+     myOnResolutionSelect() / myOnResolutionCustom() respond to UI changes.
+     ─────────────────────────────────────────────────────────────────
+     Formula: conv2 output = floor((sz - 2) / 2) - 2
+     Example: sz=64 → floor(62/2)-2 = 29
+     The flat layer size = conv2out * conv2out * 8 filters
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// RESOLUTION
+// ─────────────────────────────────────────────────────────
+function myGetConv2Out(sz) { return Math.floor((sz - 2) / 2) - 2; }
+
+// ─────────────────────────────────────────────────────────
+// RESIZE HELPER — matches ESP32 pixel-sampling exactly
+// ─────────────────────────────────────────────────────────
+function myResizeTensor(tensor3d, sz) {
+  return tf.image.resizeNearestNeighbor(tensor3d, [sz, sz], false, true);
+}
+
+function myUpdateResolutionHint() {
+  const sz  = myInputSize;
+  const c2  = myGetConv2Out(sz);
+  const flat = c2 * c2 * 8;
+  const hint = document.getElementById('myResolutionHint');
+  if (!hint) return;
+  const locked = !!myModel;
+  hint.innerHTML = locked
+    ? `Locked at ${sz}x${sz} — rebuild model to change`
+    : `Resolution: ${sz}x${sz} — conv2 out: ${c2}x${c2} — flat: ${flat} — Set BEFORE starting`;
+}
+
+function myOnResolutionSelect() {
+  if (myModel) {
+    alert('Resolution is locked once the model is built.\nRefresh the page to change.');
+    const sel = document.getElementById('myResolutionSelect');
+    const match = Array.from(sel.options).find(o => o.value === String(myInputSize));
+    if (match) sel.value = myInputSize; else sel.value = 'custom';
+    return;
+  }
+  const sel = document.getElementById('myResolutionSelect');
+  const custom = document.getElementById('myResolutionCustom');
+  if (sel.value === 'custom') {
+    custom.style.display = 'inline-block';
+    myInputSize = parseInt(custom.value) || 64;
+  } else {
+    custom.style.display = 'none';
+    myInputSize = parseInt(sel.value);
+  }
+  myUpdateResolutionHint();
+}
+
+function myOnResolutionCustom() {
+  if (myModel) return;
+  const val = parseInt(document.getElementById('myResolutionCustom').value) || 64;
+  myInputSize = Math.max(8, Math.min(240, val % 2 === 0 ? val : val - 1));
+  document.getElementById('myResolutionCustom').value = myInputSize;
+  myUpdateResolutionHint();
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 3 — GENERAL HELPERS
+     Small utility functions used throughout the app.
+     ─────────────────────────────────────────────────────────────────
+     myLog(msg)           - prepends a timestamped message to the log div
+     myUpdateMaxBuffer()  - reads the max buffer input and updates the var
+     myToggleEpochMode()  - switches between epoch mode and batch-count mode
+     myUpdateEpochHint()  - calculates and displays total batch estimate
+     myAugment(tensor)    - randomly tweaks brightness/contrast for variety
+     myGetLabels()        - reads the 3 label text inputs into an array
+     toCString(s)         - sanitizes a label for use in a C string literal
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────
+var myRawCanvas = document.createElement('canvas');
+myRawCanvas.width = 240; myRawCanvas.height = 240;
+var myRawCtx = myRawCanvas.getContext('2d');
+
+function myLog(msg) {
+  const div = document.getElementById('myDivHistory');
+  const t = new Date().toLocaleTimeString();
+  div.innerHTML = `<span>[${t}]</span> ${msg}<br>` + div.innerHTML;
+}
+
+function myUpdateMaxBuffer() {
+  myMaxBuffer = parseInt(document.getElementById('myMaxBufferInput').value) || 100;
+  myLog(`Max buffer: ${myMaxBuffer} samples/class`);
+}
+
+function myToggleEpochMode() {
+  const all = document.getElementById('myUseAllData').checked;
+  document.getElementById('myEpochControls').style.display = all ? 'block' : 'none';
+  document.getElementById('myBatchControls').style.display = all ? 'none' : 'block';
+  myUpdateEpochHint();
+}
+
+function myUpdateEpochHint() {
+  if (!document.getElementById('myUseAllData').checked) return;
+  const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+  const total  = counts.reduce((a,b) => a+b, 0);
+  const bs     = parseInt(document.getElementById('myBatchSize').value) || 6;
+  const bpe    = Math.ceil(total / bs);
+  const ep     = parseFloat(document.getElementById('myTargetEpochs').value) || 10;
+  const hint   = document.getElementById('myEpochHint');
+  if (hint) hint.innerText = total > 0
+    ? `~${bpe} batches/epoch = ${Math.ceil(ep*bpe)} total batches`
+    : 'Waiting for training data...';
+}
+
+function myAugment(tensor) {
+  return tf.tidy(() => {
+    let a = tensor;
+    if (Math.random() > 0.5) a = a.add((Math.random()-0.5)*0.2).clipByValue(0,1);
+    if (Math.random() > 0.5) {
+      const c = 0.8 + Math.random()*0.4;
+      const m = a.mean();
+      a = a.sub(m).mul(c).add(m).clipByValue(0,1);
+    }
+    return a;
+  });
+}
+
+// ─────────────────────────────────────────────────────────
+// LABELS
+// ─────────────────────────────────────────────────────────
+function myGetLabels() {
+  return [
+    document.getElementById('myLabel0').value || '0Blank',
+    document.getElementById('myLabel1').value || '1Circle',
+    document.getElementById('myLabel2').value || '2Square'
+  ];
+}
+
+function toCString(s) {
+  return s.substring(0,20).replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n');
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 4 — WEBSERIAL (ESP32 COMMUNICATION)
+     Handles connecting, disconnecting, sending, and receiving data
+     over the browser's WebSerial API.
+     ─────────────────────────────────────────────────────────────────
+     mySerialLog(msg)        - adds a line to the serial monitor div
+     mySetSerialStatus(bool) - updates the status badge + camera dropdown
+     myConnectSerial()       - opens serial port at 115200 baud, starts read loop
+     myDisconnectSerial()    - cleanly closes port and clears auto-capture
+     mySendSerialChar(c)     - writes a single character to the ESP32
+     mySendSerial()          - reads the command input field and sends it
+     myHandleSerialData(str) - parses incoming lines, detects FRAME_B64 images
+     myDecodeBase64Frame(b64)- decodes a base64 JPEG and draws it to the preview
+     myRequestEspFrame()     - sends 'f' command to request one frame
+     myToggleEspAuto()       - starts/stops auto-capture timer (every 1.5s)
+     myAddEspFrameToClass()  - adds last ESP32 frame to selected training class
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// WEBSERIAL
+// ─────────────────────────────────────────────────────────
+function mySerialLog(msg) {
+  const box = document.getElementById('mySerialLog');
+  box.innerHTML += `<span>${new Date().toLocaleTimeString()}</span> ${msg}\n`;
+  if (document.getElementById('mySerialAutoScroll').checked)
+    box.scrollTop = box.scrollHeight;
+}
+
+function mySetSerialStatus(connected) {
+  mySerialConnected = connected;
+  const el = document.getElementById('mySerialStatus');
+  if (connected) {
+    el.textContent = 'Connected';
+    const sel = document.getElementById('myCameraSelect');
+    if (!document.getElementById('opt-esp32-serial')) {
+      const opt = document.createElement('option');
+      opt.id = 'opt-esp32-serial';
+      opt.value = '__esp32serial__';
+      opt.text = 'ESP32 Camera (WebSerial)';
+      sel.insertBefore(opt, sel.firstChild);
+    }
+  } else {
+    el.textContent = 'Not Connected';
+    const opt = document.getElementById('opt-esp32-serial');
+    if (opt) opt.remove();
+  }
+}
+
+async function myConnectSerial() {
+  if (!('serial' in navigator)) {
+    alert('WebSerial not supported. Please use Chrome or Edge on a desktop.');
+    return;
+  }
+  try {
+    mySerialPort = await navigator.serial.requestPort();
+    await mySerialPort.open({ baudRate: 115200 });
+    mySetSerialStatus(true);
+    myLog('ESP32 Serial connected');
+    mySerialLog('=== Connected at 115200 baud ===');
+
+    const textDecoder = new TextDecoderStream();
+    const readableStreamClosed = mySerialPort.readable.pipeTo(textDecoder.writable);
+    mySerialReader = textDecoder.readable.getReader();
+
+    mySerialReadLoop = (async () => {
+      try {
+        while (true) {
+          const { value, done } = await mySerialReader.read();
+          if (done) break;
+          if (value) myHandleSerialData(value);
+        }
+      } catch (e) {
+        if (mySerialConnected) myLog('Serial read error: ' + e.message);
+      }
+    })();
+
+    const textEncoder = new TextEncoderStream();
+    const writableStreamClosed = textEncoder.readable.pipeTo(mySerialPort.writable);
+    mySerialWriter = textEncoder.writable.getWriter();
+
+  } catch (e) {
+    myLog('Serial connect failed: ' + e.message);
+  }
+}
+
+async function myDisconnectSerial() {
+  myEspAutoCapture = false;
+  if (myEspAutoTimer) { clearInterval(myEspAutoTimer); myEspAutoTimer = null; }
+  document.getElementById('myEspAutoBtn').textContent = 'Auto Capture';
+  try {
+    if (mySerialReader) { await mySerialReader.cancel(); mySerialReader = null; }
+    if (mySerialWriter) { await mySerialWriter.close(); mySerialWriter = null; }
+    if (mySerialPort) { await mySerialPort.close(); mySerialPort = null; }
+  } catch(e) {}
+  mySetSerialStatus(false);
+  myLog('ESP32 Serial disconnected');
+}
+
+async function mySendSerialChar(c) {
+  if (!mySerialWriter) { myLog('Not connected to ESP32'); return; }
+  try {
+    await mySerialWriter.write(c);
+    mySerialLog(`Sent: "${c}"`);
+  } catch(e) { myLog('Serial write error: ' + e.message); }
+}
+
+async function mySendSerial() {
+  const cmd = document.getElementById('mySerialCmd').value.trim();
+  if (cmd) { await mySendSerialChar(cmd[0]); }
+}
+
+// ─────────────────────────────────────────────────────────
+// Handle incoming serial data — parse text lines + JPEG frames
+// ESP32 sends base64 encoded JPEG as: "FRAME_B64:<base64data>\n"
+// ─────────────────────────────────────────────────────────
+function myHandleSerialData(chunk) {
+  mySerialBuffer += chunk;
+  const lines = mySerialBuffer.split('\n');
+  mySerialBuffer = lines.pop();
+
+  for (const line of lines) {
+    const l = line.trim();
+    if (!l) continue;
+    if (l.startsWith('FRAME_B64:')) {
+      const b64 = l.substring(10).trim();
+      myDecodeBase64Frame(b64);
+      continue;
+    }
+    mySerialLog(l.replace(/</g,'&lt;').replace(/>/g,'&gt;'));
+  }
+}
+
+async function myDecodeBase64Frame(b64) {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], {type:'image/jpeg'});
+    const url  = URL.createObjectURL(blob);
+    const img  = new Image();
+    img.onload = () => {
+      const preview = document.getElementById('myEspPreview');
+      const ctx = preview.getContext('2d');
+      ctx.drawImage(img, 0, 0, preview.width, preview.height);
+      URL.revokeObjectURL(url);
+
+      const tmp = document.createElement('canvas');
+      tmp.width = 240; tmp.height = 240;
+      const tc = tmp.getContext('2d');
+      tc.drawImage(img, 0, 0, 240, 240);
+      myEspLastFrame = tc.getImageData(0, 0, 240, 240);
+      mySerialLog('Frame received and displayed');
+
+      if (myEspAutoCapture) myAddEspFrameToClass();
+    };
+    img.src = url;
+  } catch(e) {
+    mySerialLog('Frame decode error: ' + e.message);
+  }
+}
+
+async function myRequestEspFrame() {
+  if (!mySerialWriter) {
+    myLog('Not connected to ESP32. Connect first.');
+    return;
+  }
+  await mySendSerialChar('f');
+  mySerialLog('Requested frame (ESP32 must support FRAME_B64 response)');
+  myLog('Frame request sent. Requires firmware that supports the "f" command.');
+}
+
+function myToggleEspAuto() {
+  myEspAutoCapture = !myEspAutoCapture;
+  const btn = document.getElementById('myEspAutoBtn');
+  if (myEspAutoCapture) {
+    btn.textContent = 'Stop Auto';
+    myEspAutoTimer = setInterval(myRequestEspFrame, 1500);
+    myLog('ESP32 auto capture started (every 1.5s)');
+  } else {
+    btn.textContent = 'Auto Capture';
+    if (myEspAutoTimer) { clearInterval(myEspAutoTimer); myEspAutoTimer = null; }
+    myLog('ESP32 auto capture stopped');
+  }
+}
+
+async function myAddEspFrameToClass() {
+  if (!myEspLastFrame) { myLog('No ESP32 frame available yet'); return; }
+  if (!myModel) { myLog('Start Camera & Brain first to initialise the model before adding ESP32 frames'); }
+
+  const cls = parseInt(document.getElementById('myEspCaptureClass').value);
+
+  if (myRawData[cls].length >= myMaxBuffer) myRawData[cls].shift();
+  myRawData[cls].push(myEspLastFrame);
+
+  const tmp = document.createElement('canvas');
+  tmp.width = 240; tmp.height = 240;
+  const tc = tmp.getContext('2d');
+  tc.putImageData(myEspLastFrame, 0, 0);
+
+  let tensor = myResizeTensor(tf.browser.fromPixels(tmp), myInputSize);
+  if (myIsGrayscaleMode) {
+    const old = tensor;
+    tensor = tf.tidy(() => {
+      const r = old.slice([0,0,0],[myInputSize,myInputSize,1]);
+      const g = old.slice([0,0,1],[myInputSize,myInputSize,1]);
+      const b = old.slice([0,0,2],[myInputSize,myInputSize,1]);
+      return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+    });
+    old.dispose();
+  }
+  const old2 = tensor;
+  tensor = tensor.div(255.0).expandDims(0);
+  old2.dispose();
+
+  if (myTrainData[cls].length < myMaxBuffer) {
+    myTrainData[cls].push(tensor);
+  } else {
+    myTrainData[cls][0].dispose(); myTrainData[cls].shift();
+    myTrainData[cls].push(tensor);
+  }
+  document.getElementById('myCount'+cls).innerHTML = `${myTrainData[cls].length} samples`;
+  myLog(`ESP32 frame added to Class ${cls} (${document.getElementById('myLabel'+cls).value}), total: ${myTrainData[cls].length}`);
+  myUpdateEpochHint();
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 5 — CAMERA & TRAINING LOOP
+     The main app logic: start/stop the webcam, build the CNN model,
+     and run the continuous training+inference timer loop.
+     ─────────────────────────────────────────────────────────────────
+     myCheckGrayscaleChange() - warns if you change mode after model built
+     myStopAnalysis()         - pauses inference display
+     myStartAnalysis()        - resumes inference display
+     myStopCamera()           - stops the webcam stream
+     myStartAll()             - starts camera, builds CNN if needed, starts timer
+     myPauseTraining()        - sets myTrainingPaused = true
+     myResumeTraining()       - sets myTrainingPaused = false
+     myDebugCurrentFrame()    - logs prediction probabilities for current frame
+     ─────────────────────────────────────────────────────────────────
+     The model architecture (2-layer CNN):
+       Input: [sz, sz, 1 or 3]
+       Conv2D(4 filters, 3x3) + LeakyReLU + MaxPool(2x2)
+       Conv2D(8 filters, 3x3) + LeakyReLU
+       Flatten + Dropout + Dense(3, softmax)
+     Compiled with: Adam optimizer, categoricalCrossentropy loss
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// CAMERA
+// ─────────────────────────────────────────────────────────
+function myCheckGrayscaleChange() {
+  if (myModel) {
+    alert('Changing colour mode requires restarting.\nRefresh the page.');
+    document.getElementById('myGrayscaleToggle').checked = myIsGrayscaleMode;
+  } else if (document.getElementById('myGrayscaleToggle').checked) {
+    myLog('Grayscale mode enabled. Recommend: 20+ samples/class, 80-100 batches, LR 0.002-0.003');
+  }
+}
+
+function myStopAnalysis() {
+  myAnalysisStopped = true;
+  document.getElementById('myStopAnalysisBtn').style.display = 'none';
+  document.getElementById('myStartAnalysisBtn').style.display = 'block';
+  document.getElementById('myOutputDisplay').innerHTML = 'Analysis Stopped';
+  myLog('Analysis Stopped');
+}
+
+function myStartAnalysis() {
+  myAnalysisStopped = false;
+  document.getElementById('myStopAnalysisBtn').style.display = 'block';
+  document.getElementById('myStartAnalysisBtn').style.display = 'none';
+  document.getElementById('myOutputDisplay').innerHTML = 'Analyzing...';
+  myLog('Analysis Started');
+}
+
+function myStopCamera() {
+  const v = document.getElementById('myVideo1');
+  if (v.srcObject) { v.srcObject.getTracks().forEach(t=>t.stop()); v.srcObject = null; }
+  if (myGrayscaleRenderTimer) { clearInterval(myGrayscaleRenderTimer); myGrayscaleRenderTimer = null; }
+  myCameraStopped = true;
+  document.getElementById('myStartBtn').style.display = 'block';
+  document.getElementById('myStopCameraBtn').style.display = 'none';
+  myLog('Camera Stopped — training continues');
+}
+
+async function myStartAll() {
+  const myVideo  = document.getElementById('myVideo1');
+  const myCanvas = document.getElementById('myCanvas1');
+  const myCtx    = myCanvas.getContext('2d');
+  const sel      = document.getElementById('myCameraSelect');
+
+  if (sel.value === '__esp32serial__') {
+    if (!mySerialConnected) {
+      alert('Connect to ESP32 via WebSerial first (Section 2), then select the ESP32 camera.');
+      return;
+    }
+    myVideo.style.display  = 'none';
+    myCanvas.style.display = 'none';
+    document.getElementById('myEspPreview').style.height = '240px';
+    myCameraStopped = false;
+    document.getElementById('myStartBtn').style.display   = 'none';
+    document.getElementById('myStopCameraBtn').style.display = 'block';
+    myLog('ESP32 camera mode — use Request Frame / Auto Capture in section 2 to collect images');
+  } else if (!myVideo.srcObject) {
+    myCameraStopped = false;
+    const deviceId = sel.value;
+    myVideo.srcObject = await navigator.mediaDevices.getUserMedia({
+      video: { width:240, height:240, deviceId: deviceId ? {exact:deviceId} : undefined }
+    });
+    myLog('Webcam started');
+    document.getElementById('myStartBtn').style.display   = 'none';
+    document.getElementById('myStopCameraBtn').style.display = 'block';
+    myIsGrayscaleMode = document.getElementById('myGrayscaleToggle').checked;
+    if (myIsGrayscaleMode) {
+      myVideo.style.display  = 'none';
+      myCanvas.style.display = 'block';
+      if (myGrayscaleRenderTimer) clearInterval(myGrayscaleRenderTimer);
+      myGrayscaleRenderTimer = setInterval(() => {
+        myCtx.drawImage(myVideo, 0, 0, 240, 240);
+        const imgData = myCtx.getImageData(0,0,240,240);
+        const d = imgData.data;
+        for (let i=0; i<d.length; i+=4) {
+          const g = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+          d[i]=d[i+1]=d[i+2]=g;
+        }
+        myCtx.putImageData(imgData,0,0);
+      }, 33);
+    } else {
+      myVideo.style.display  = 'block';
+      myCanvas.style.display = 'none';
+    }
+  }
+
+  if (!myModel) {
+    const inCh = myIsGrayscaleMode ? 1 : 3;
+    const lr   = parseFloat(document.getElementById('myLearningRate').value) || 0.001;
+    const drop = parseFloat(document.getElementById('myDropoutRate').value) || 0.3;
+
+    document.getElementById('myResolutionSelect').disabled = true;
+    document.getElementById('myResolutionCustom').disabled = true;
+    myUpdateResolutionHint();
+
+    myModel = tf.sequential();
+    myModel.add(tf.layers.conv2d({ inputShape:[myInputSize,myInputSize,inCh], kernelSize:3, filters:4, activation:null,
+      kernelRegularizer:tf.regularizers.l2({l2:0.0001}), biasInitializer:'zeros' }));
+    myModel.add(tf.layers.leakyReLU({alpha:0.1}));
+    myModel.add(tf.layers.maxPooling2d({poolSize:2, strides:2}));
+    myModel.add(tf.layers.conv2d({ kernelSize:3, filters:8, activation:null,
+      kernelRegularizer:tf.regularizers.l2({l2:0.0001}), biasInitializer:'zeros' }));
+    myModel.add(tf.layers.leakyReLU({alpha:0.1}));
+    myModel.add(tf.layers.flatten());
+    myModel.add(tf.layers.dropout({rate:drop}));
+    myModel.add(tf.layers.dense({ units:3, activation:'softmax',
+      kernelInitializer:'heNormal', biasInitializer:'zeros' }));
+    myModel.compile({ optimizer:tf.train.adam(lr), loss:'categoricalCrossentropy', metrics:['accuracy'] });
+    const c2 = myGetConv2Out(myInputSize);
+    myLog(`Brain: ${myInputSize}x${myInputSize} ${myIsGrayscaleMode?'Grayscale':'RGB'} CNN | conv2 out: ${c2}x${c2} | flat: ${c2*c2*8} | Drop: ${drop} LR: ${lr}`);
+  }
+
+  if (myTimer) clearInterval(myTimer);
+  myTimer = setInterval(async () => {
+    let myInput = null;
+    if (!myCameraStopped && myVideo.srcObject && sel.value !== '__esp32serial__') {
+      myInput = myResizeTensor(tf.browser.fromPixels(myVideo), myInputSize);
+      if (myIsGrayscaleMode) {
+        const old = myInput;
+        myInput = tf.tidy(() => {
+          const r = old.slice([0,0,0],[myInputSize,myInputSize,1]);
+          const g = old.slice([0,0,1],[myInputSize,myInputSize,1]);
+          const b = old.slice([0,0,2],[myInputSize,myInputSize,1]);
+          return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+        });
+        old.dispose();
+      }
+      const old2 = myInput;
+      myInput = myInput.div(255.0).expandDims(0);
+      old2.dispose();
+    }
+
+    const minSamples = parseInt(document.getElementById('myMinSamples').value) || 10;
+    const counts = [myTrainData[0].length, myTrainData[1].length, myTrainData[2].length];
+    const minCount = Math.min(...counts);
+    const maxCount = Math.max(...counts);
+    let batchSz = parseInt(document.getElementById('myBatchSize').value) || 6;
+    if (batchSz < 3) batchSz = 3;
+    if (batchSz % 3 !== 0) batchSz = Math.ceil(batchSz/3)*3;
+    const samplesPerClass = batchSz / 3;
+    const useAll = document.getElementById('myUseAllData').checked;
+    let maxBatches = 0;
+    if (useAll) {
+      const ep = parseFloat(document.getElementById('myTargetEpochs').value) || 0;
+      const total = counts.reduce((a,b)=>a+b,0);
+      const bpe   = total > 0 ? Math.ceil(total/batchSz) : 1;
+      maxBatches = ep > 0 ? Math.ceil(ep*bpe) : 0;
+    } else {
+      maxBatches = parseInt(document.getElementById('myMaxBatches').value) || 0;
+    }
+    const reachedLimit = maxBatches > 0 && myEpochCount >= maxBatches;
+
+    if (minCount >= minSamples && !myTrainingPaused && !reachedLimit) {
+      if (maxCount > minCount*2 && Math.random() < 0.01)
+        myLog(`Imbalanced data [${counts[0]}, ${counts[1]}, ${counts[2]}]`);
+
+      let myBatch = [], myLabels = [];
+      if (useAll) {
+        if (myAllDataIndex === 0) {
+          myCurrentEpoch++;
+          myShuffledData = [];
+          for (let cls=0; cls<3; cls++)
+            for (let i=0; i<myTrainData[cls].length; i++)
+              myShuffledData.push({sample:myTrainData[cls][i], label:cls});
+          for (let i=myShuffledData.length-1; i>0; i--) {
+            const j = Math.floor(Math.random()*(i+1));
+            [myShuffledData[i],myShuffledData[j]] = [myShuffledData[j],myShuffledData[i]];
+          }
+          myLog(`Epoch ${myCurrentEpoch} start (${myShuffledData.length} samples)`);
+        }
+        for (let i=0; i<batchSz && myAllDataIndex<myShuffledData.length; i++) {
+          const item = myShuffledData[myAllDataIndex];
+          myBatch.push(Math.random()>0.5 ? myAugment(item.sample) : tf.clone(item.sample));
+          myLabels.push(item.label===0?[1,0,0]:item.label===1?[0,1,0]:[0,0,1]);
+          myAllDataIndex++;
+        }
+        if (myAllDataIndex >= myShuffledData.length) myAllDataIndex = 0;
+      } else {
+        for (let cls=0; cls<3; cls++)
+          for (let i=0; i<samplesPerClass; i++) {
+            const idx = Math.floor(Math.random()*myTrainData[cls].length);
+            myBatch.push(Math.random()>0.5 ? myAugment(myTrainData[cls][idx]) : tf.clone(myTrainData[cls][idx]));
+            myLabels.push(cls===0?[1,0,0]:cls===1?[0,1,0]:[0,0,1]);
+          }
+      }
+
+      const bt = tf.concat(myBatch);
+      const lt = tf.tensor2d(myLabels);
+      let loss = 0;
+      try {
+        const r = await myModel.trainOnBatch(bt, lt);
+        loss = Array.isArray(r) ? r[0] : r;
+        if (isNaN(loss)||!isFinite(loss)) { myLog('Invalid loss, skipping'); loss=0; }
+      } catch(e) { myLog('Training error: '+e.message); loss=0; }
+      bt.dispose(); lt.dispose();
+      myBatch.forEach(t => {
+        let stored = false;
+        for (let c=0; c<3; c++) if (myTrainData[c].includes(t)) { stored=true; break; }
+        if (!stored) t.dispose();
+      });
+      myEpochCount++;
+      if (loss>0) { myLossSum+=loss; myLossCount++; }
+
+      if (myEpochCount % 10 === 0) {
+        const avg = myLossCount>0 ? myLossSum/myLossCount : 0;
+        if (avg>0&&isFinite(avg)) myLossHistory.push(avg);
+        if (myLossHistory.length>20) myLossHistory.shift();
+        const recAvg = myLossHistory.length>0 ? myLossHistory.reduce((a,b)=>a+b,0)/myLossHistory.length : 0;
+        document.getElementById('myEpochDisplay').innerText = myEpochCount;
+        document.getElementById('myLossDisplay').innerText  = myLossHistory.length>0 ? recAvg.toFixed(4) : '--';
+        let status='', pct=0;
+        if (!myLossHistory.length)  { status='Initializing...'; pct=5; }
+        else if (recAvg>1.0)        { status='Starting...';     pct=10; }
+        else if (recAvg>0.5)        { status='Training...';     pct=30; }
+        else if (recAvg>0.2)        { status='Improving...';    pct=60; }
+        else if (recAvg>0.1)        { status='Converging...';   pct=80; }
+        else                        { status='Well Trained!';   pct=100; }
+        document.getElementById('myStatusDisplay').innerText  = status;
+        document.getElementById('myProgressBar').style.width  = pct+'%';
+        document.getElementById('myPauseBtn').disabled = false;
+        myLossSum = 0; myLossCount = 0;
+      }
+    } else if (reachedLimit) {
+      if (!myTrainingPaused) {
+        myPauseTraining();
+        myLog(`Training complete — reached target`);
+      }
+      document.getElementById('myStatusDisplay').innerText = `Completed (${myEpochCount} batches)`;
+    } else {
+      if (myTrainingPaused) {
+        document.getElementById('myStatusDisplay').innerText = 'Paused';
+      } else {
+        const need = counts.map(c => Math.max(0, minSamples-c));
+        document.getElementById('myStatusDisplay').innerText = `Waiting (need: ${need[0]}, ${need[1]}, ${need[2]})`;
+      }
+    }
+
+    if (myInput && !myAnalysisStopped) {
+      document.getElementById('myStopAnalysisBtn').disabled = false;
+      const pred  = myModel.predict(myInput);
+      const probs = await pred.data();
+      const id    = (await pred.argMax(1).data())[0];
+      const pcts  = [0,1,2].map(i => (probs[i]*100).toFixed(1));
+      const max   = Math.max(...probs)*100;
+      const warn  = max<50 ? '<br>Low confidence' : '';
+      const labels = myGetLabels();
+      document.getElementById('myOutputDisplay').innerHTML =
+        `DETECTED: ${labels[id]}<br>` +
+        [0,1,2].map(i => `${labels[i]}: ${pcts[i]}%`).join('<br>') +
+        warn;
+      pred.dispose();
+    } else if (myCameraStopped || sel.value==='__esp32serial__') {
+      document.getElementById('myOutputDisplay').innerHTML = 'Camera Stopped — training continues...';
+    }
+    if (myInput) myInput.dispose();
+  }, 150);
+}
+
+function myPauseTraining() {
+  myTrainingPaused = true;
+  document.getElementById('myPauseBtn').style.display  = 'none';
+  document.getElementById('myResumeBtn').style.display = 'block';
+  myLog('Training Paused — safe to export model');
+}
+
+function myResumeTraining() {
+  myTrainingPaused = false;
+  document.getElementById('myPauseBtn').style.display  = 'block';
+  document.getElementById('myResumeBtn').style.display = 'none';
+  myLog('Training Resumed');
+}
+
+// ─────────────────────────────────────────────────────────
+// DEBUG
+// ─────────────────────────────────────────────────────────
+async function myDebugCurrentFrame() {
+  const v = document.getElementById('myVideo1');
+  if ((!v.srcObject || myCameraStopped) && !myEspLastFrame) { myLog('ERROR: No camera source running'); return; }
+  if (!myModel) { myLog('ERROR: Model not initialised'); return; }
+  myLog('========== WEB DEBUG ==========');
+  let myInput;
+  if (myEspLastFrame) {
+    const tmp = document.createElement('canvas'); tmp.width=240; tmp.height=240;
+    tmp.getContext('2d').putImageData(myEspLastFrame,0,0);
+    myInput = myResizeTensor(tf.browser.fromPixels(tmp), myInputSize);
+  } else {
+    myInput = myResizeTensor(tf.browser.fromPixels(v), myInputSize);
+  }
+  if (myIsGrayscaleMode) {
+    const old=myInput;
+    myInput = tf.tidy(() => {
+      const r=old.slice([0,0,0],[myInputSize,myInputSize,1]);
+      const g=old.slice([0,0,1],[myInputSize,myInputSize,1]);
+      const b=old.slice([0,0,2],[myInputSize,myInputSize,1]);
+      return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));
+    });
+    old.dispose();
+  }
+  const old2=myInput; myInput=myInput.div(255.0).expandDims(0); old2.dispose();
+  const pred = myModel.predict(myInput);
+  const probs = await pred.data();
+  myLog(`Probs: [${[0,1,2].map(i=>(probs[i]*100).toFixed(1)+'%').join(', ')}]`);
+  myLog('========== END DEBUG ==========');
+  myInput.dispose(); pred.dispose();
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 6 — COLLECT / LOAD / SAVE / CLEAR IMAGES
+     Functions that manage the training image buffers for each class.
+     ─────────────────────────────────────────────────────────────────
+     myCollect(id)      - grabs one frame from the webcam into class id
+     myLoadImages(id)   - opens a file picker and loads JPG/PNG files as tensors
+     myClearImages(id)  - disposes all tensors and clears the class buffer
+     mySaveImages(id)   - zips all images for one class and downloads as .zip
+     mySaveAllImages()  - zips all 3 classes into one images.zip for SD card
+     ─────────────────────────────────────────────────────────────────
+     Each image is stored in two forms:
+       myRawData[id]   = 240x240 ImageData (pixel array) for saving to ZIP
+       myTrainData[id] = resized+normalized tensor for training the model
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// COLLECT / LOAD / SAVE / CLEAR IMAGES
+// ─────────────────────────────────────────────────────────
+function myCollect(myID) {
+  const v = document.getElementById('myVideo1');
+  if (!v.srcObject || myCameraStopped) { myLog('ERROR: Camera not running'); return; }
+  myRawCtx.drawImage(v, 0, 0, 240, 240);
+  const raw = myRawCtx.getImageData(0,0,240,240);
+  if (myRawData[myID].length >= myMaxBuffer) myRawData[myID].shift();
+  myRawData[myID].push(raw);
+  let t = myResizeTensor(tf.browser.fromPixels(v), myInputSize);
+  if (myIsGrayscaleMode) {
+    const old=t;
+    t = tf.tidy(() => { const r=old.slice([0,0,0],[myInputSize,myInputSize,1]); const g=old.slice([0,0,1],[myInputSize,myInputSize,1]); const b=old.slice([0,0,2],[myInputSize,myInputSize,1]); return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114)); });
+    old.dispose();
+  }
+  const old2=t; t=t.div(255.0).expandDims(0); old2.dispose();
+  const data=t.dataSync();
+  for (let i=0;i<data.length;i++) if (isNaN(data[i])||!isFinite(data[i])) { myLog('Bad frame, skipping'); t.dispose(); return; }
+  if (myTrainData[myID].length < myMaxBuffer) { myTrainData[myID].push(t); }
+  else { myTrainData[myID][0].dispose(); myTrainData[myID].shift(); myTrainData[myID].push(t); }
+  document.getElementById('myCount'+myID).innerHTML = `${myTrainData[myID].length} samples`;
+  myLog(`Class ${myID} captured (total: ${myTrainData[myID].length})`);
+  myUpdateEpochHint();
+}
+
+function myLoadImages(myID) {
+  const inp = document.createElement('input'); inp.type='file'; inp.multiple=true; inp.accept='image/*';
+  inp.onchange = async (e) => {
+    const files = Array.from(e.target.files);
+    myLog(`Loading ${files.length} images for Class ${myID}...`);
+    let loaded = 0;
+    const lc = document.createElement('canvas'); lc.width=240; lc.height=240;
+    const lctx = lc.getContext('2d');
+    for (const file of files) {
+      try {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        await new Promise((res,rej) => {
+          img.onload = () => {
+            lctx.drawImage(img,0,0,240,240);
+            const raw=lctx.getImageData(0,0,240,240);
+            if (myRawData[myID].length>=myMaxBuffer) myRawData[myID].shift();
+            myRawData[myID].push(raw);
+            let t=myResizeTensor(tf.browser.fromPixels(lc),myInputSize);
+            if (myIsGrayscaleMode){
+              const old=t; t=tf.tidy(()=>{const r=old.slice([0,0,0],[myInputSize,myInputSize,1]);const g=old.slice([0,0,1],[myInputSize,myInputSize,1]);const b=old.slice([0,0,2],[myInputSize,myInputSize,1]);return r.mul(0.299).add(g.mul(0.587)).add(b.mul(0.114));});old.dispose();
+            }
+            const old2=t; t=t.div(255.0).expandDims(0); old2.dispose();
+            if (myTrainData[myID].length<myMaxBuffer){myTrainData[myID].push(t);}
+            else{myTrainData[myID][0].dispose();myTrainData[myID].shift();myTrainData[myID].push(t);}
+            loaded++;
+            URL.revokeObjectURL(url); res();
+          };
+          img.onerror=()=>{ URL.revokeObjectURL(url); rej(); };
+          img.src=url;
+        });
+      } catch(e) {}
+    }
+    document.getElementById('myCount'+myID).innerHTML = `${myTrainData[myID].length} samples`;
+    myLog(`Class ${myID}: loaded ${loaded}/${files.length} (total: ${myTrainData[myID].length})`);
+    myUpdateEpochHint();
+  };
+  inp.click();
+}
+
+function myClearImages(myID) {
+  if (!myTrainData[myID].length) { myLog(`Class ${myID}: already empty`); return; }
+  myTrainData[myID].forEach(t=>t.dispose()); myTrainData[myID]=[];
+  myRawData[myID]=[];
+  document.getElementById('myCount'+myID).innerHTML='0 samples';
+  myLog(`Class ${myID}: cleared`);
+  myUpdateEpochHint();
+}
+
+async function mySaveImages(myID) {
+  const label = myGetLabels()[myID];
+  if (typeof JSZip==='undefined') { myLog('ERROR: JSZip not loaded'); return; }
+  const useRaw = myRawData[myID].length>0;
+  const cnt = useRaw ? myRawData[myID].length : myTrainData[myID].length;
+  if (!cnt) { myLog(`Class ${myID}: no images`); return; }
+  myLog(`Class ${myID}: saving ${cnt} images...`);
+  const zip = new JSZip();
+  const folder = zip.folder(label);
+  const ex = document.createElement('canvas'); ex.width=240; ex.height=240;
+  const exc = ex.getContext('2d');
+  let conv = 0;
+  for (let i=0;i<cnt;i++) {
+    try {
+      if (useRaw) exc.putImageData(myRawData[myID][i],0,0);
+      else {
+        const t=myTrainData[myID][i].squeeze([0]);
+        const sh=t.shape; const h=sh[0],w=sh[1],ch=sh[2]||1;
+        const px=await tf.tidy(()=>t.mul(255).clipByValue(0,255).cast('int32')).data();
+        t.dispose();
+        const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+        const tc=tmp.getContext('2d'); const id=tc.createImageData(w,h);
+        for (let py=0;py<h;py++) for (let px2=0;px2<w;px2++) {
+          const si=(py*w+px2)*ch,di=(py*w+px2)*4;
+          id.data[di]=ch===1?px[si]:px[si]; id.data[di+1]=ch===1?px[si]:px[si+1]; id.data[di+2]=ch===1?px[si]:px[si+2]; id.data[di+3]=255;
+        }
+        tc.putImageData(id,0,0); exc.imageSmoothingEnabled=false; exc.drawImage(tmp,0,0,240,240);
+      }
+      const blob=await new Promise(r=>ex.toBlob(r,'image/jpeg',0.92));
+      folder.file(`img_${String(i+1).padStart(4,'0')}.jpg`,blob); conv++;
+    } catch(e) { myLog(`Skip img ${i+1}: ${e.message}`); }
+  }
+  if (!conv) { myLog('Nothing converted'); return; }
+  const zblob=await zip.generateAsync({type:'blob',compression:'STORE'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(zblob); a.download=`${label}_images.zip`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  myLog(`${label}_images.zip (${conv} images) — copy folder to SD /images/${label}/`);
+}
+
+async function mySaveAllImages() {
+  if (typeof JSZip==='undefined') { myLog('ERROR: JSZip not loaded'); return; }
+  const labels=myGetLabels();
+  const total=[0,1,2].reduce((s,i)=>s+(myRawData[i].length||myTrainData[i].length),0);
+  if (!total) { myLog('No images collected'); return; }
+  const zip=new JSZip();
+  const ex=document.createElement('canvas'); ex.width=240; ex.height=240;
+  const exc=ex.getContext('2d');
+  let grand=0;
+  for (const id of [0,1,2]) {
+    const lbl=labels[id], useRaw=myRawData[id].length>0;
+    const cnt=useRaw?myRawData[id].length:myTrainData[id].length;
+    if (!cnt) { myLog(`Class ${id}: 0 — skipped`); continue; }
+    const folder=zip.folder(lbl); let conv=0;
+    for (let i=0;i<cnt;i++) {
+      try {
+        if (useRaw) exc.putImageData(myRawData[id][i],0,0);
+        else {
+          const t=myTrainData[id][i].squeeze([0]);
+          const sh=t.shape; const h=sh[0],w=sh[1],ch=sh[2]||1;
+          const px=await tf.tidy(()=>t.mul(255).clipByValue(0,255).cast('int32')).data();
+          t.dispose();
+          const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+          const tc=tmp.getContext('2d'); const imgd=tc.createImageData(w,h);
+          for (let py=0;py<h;py++) for (let px2=0;px2<w;px2++) {
+            const si=(py*w+px2)*ch,di=(py*w+px2)*4;
+            imgd.data[di]=ch===1?px[si]:px[si]; imgd.data[di+1]=ch===1?px[si]:px[si+1]; imgd.data[di+2]=ch===1?px[si]:px[si+2]; imgd.data[di+3]=255;
+          }
+          tc.putImageData(imgd,0,0); exc.imageSmoothingEnabled=false; exc.drawImage(tmp,0,0,240,240);
+        }
+        const blob=await new Promise(r=>ex.toBlob(r,'image/jpeg',0.92));
+        folder.file(`img_${String(i+1).padStart(4,'0')}.jpg`,blob); conv++;
+      } catch(e) { myLog(`Skip cls ${id} img ${i+1}: ${e.message}`); }
+    }
+    myLog(`  Class ${id} (${lbl}): ${conv} images`); grand+=conv;
+  }
+  if (!grand) { myLog('Nothing to save'); return; }
+  const zblob=await zip.generateAsync({type:'blob',compression:'STORE'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(zblob); a.download='images.zip';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  myLog(`images.zip — ${grand} images — unzip and copy folders to SD /images/`);
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 7 — MODEL SAVE / LOAD (TFJS FORMAT)
+     Saves and loads the model in TensorFlow.js format (JSON + bin shards).
+     ─────────────────────────────────────────────────────────────────
+     mySaveModel() - downloads model as my-tfjs-model.json + weights bin
+     myLoadModel() - opens file picker to load both JSON and bin files
+     ─────────────────────────────────────────────────────────────────
+     Note: This format is for the browser only. Use Section 4 export
+     functions to get the weights.bin and config.json for the ESP32.
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// MODEL SAVE / LOAD (TFJS)
+// ─────────────────────────────────────────────────────────
+async function mySaveModel() {
+  if (!myModel) { myLog('No model yet'); return; }
+  await myModel.save('downloads://my-tfjs-model');
+  myLog('TFJS model saved');
+}
+
+async function myLoadModel() {
+  const inp=document.createElement('input'); inp.type='file'; inp.multiple=true;
+  inp.onchange=async(e)=>{ myModel=await tf.loadLayersModel(tf.io.browserFiles(e.target.files)); myLog('TFJS model loaded'); };
+  inp.click();
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 8 — CONFIG.JSON BUILD AND EXPORT
+     Builds the config object that the ESP32 reads from the SD card.
+     ─────────────────────────────────────────────────────────────────
+     myBuildConfigObj()       - reads all UI fields and returns a JS object
+     myRefreshConfigTextarea()- converts that object to JSON and updates the textarea
+     myExportConfigJson()     - validates the textarea JSON and downloads it
+     ─────────────────────────────────────────────────────────────────
+     The config.json file is placed on the SD card at /header/config.json.
+     It tells the ESP32 firmware things like: inputSize, labels,
+     learningRate, batchSize, whether to use grayscale, etc.
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// CONFIG.JSON — build, refresh textarea, direct download
+// ─────────────────────────────────────────────────────────
+function myBuildConfigObj() {
+  const labels = myGetLabels();
+  const version = parseInt(document.getElementById('myBinVersion').value) || 50;
+  const lr      = parseFloat(document.getElementById('myLearningRate').value) || 0.00005;
+  const bs      = parseInt(document.getElementById('myBatchSize').value) || 12;
+  const ep      = parseFloat(document.getElementById('myTargetEpochs').value) || 10;
+  const useAug  = document.getElementById('myExportAugmentation').checked;
+  const useGray = document.getElementById('myExportGrayscale').checked;
+  const toPsram = document.getElementById('myExportImagesToPsram').checked;
+  const valImgs = parseInt(document.getElementById('myExportValidationImages').value) || 3;
+  return {
+    version:          version,
+    minVersion:       version,
+    inputSize:        myInputSize,
+    numClasses:       3,
+    conv1Filters:     4,
+    conv2Filters:     8,
+    learningRate:     lr,
+    batchSize:        bs,
+    targetEpochs:     Math.ceil(ep),
+    thresholdPress:   1100,
+    thresholdRelease: 900,
+    screenTimeout:    300000,
+    weightsFile:      "myWeights.bin",
+    useAugmentation:  useAug,
+    useGrayscale:     useGray,
+    imagesToPsram:    toPsram,
+    validationImages: valImgs,
+    numLabels:        3,
+    classLabels:      labels
+  };
+}
+
+function myRefreshConfigTextarea() {
+  const ta = document.getElementById('myConfigTextarea');
+  if (ta) ta.value = JSON.stringify(myBuildConfigObj(), null, 2);
+}
+
+async function myExportConfigJson() {
+  const ta = document.getElementById('myConfigTextarea');
+  const jsonText = ta ? ta.value : JSON.stringify(myBuildConfigObj(), null, 2);
+  try { JSON.parse(jsonText); }
+  catch(e) {
+    myLog('ERROR: Invalid JSON in config textarea — ' + e.message);
+    alert('Invalid JSON in config.json textarea.\n\nError: ' + e.message);
+    return;
+  }
+  const blob = new Blob([jsonText], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'config.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  const cfg = JSON.parse(jsonText);
+  myLog(`config.json saved to Downloads`);
+  myLog(`  Copy to SD card: /header/config.json`);
+  myLog(`  version=${cfg.version} | useGrayscale=${cfg.useGrayscale} | imagesToPsram=${cfg.imagesToPsram} | validationImages=${cfg.validationImages}`);
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 9 — WEIGHTS BINARY EXPORT (myWeights.bin)
+     Exports the trained CNN weights in the v57 binary format for ESP32.
+     ─────────────────────────────────────────────────────────────────
+     myTransposeConvWeights(data, ky, kx, inCh, outCh)
+       - reorders conv weights from TFJS layout [H,W,inCh,outCh]
+         to ESP32 layout [outCh,H,W,inCh]
+     myTransposeDenseWeights(data, outH, outW, numFilters, numClasses)
+       - reorders dense weights for the ESP32 flat-then-class layout
+     myGetWeightLayers()
+       - extracts and transposes weights from all 3 weight layers
+     myExportBin()
+       - builds a text header + raw float32 binary and downloads as
+         myWeights.bin. Copy this to SD card /header/myWeights.bin
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// myWeights.bin EXPORT
+// ─────────────────────────────────────────────────────────
+function myTransposeConvWeights(data, ky, kx, inCh, outCh) {
+  const out=new Float32Array(data.length);
+  for (let f=0;f<outCh;f++) for (let r=0;r<ky;r++) for (let c=0;c<kx;c++) for (let ic=0;ic<inCh;ic++) {
+    const si=r*kx*inCh*outCh+c*inCh*outCh+ic*outCh+f;
+    const di=f*ky*kx*inCh+r*kx*inCh+c*inCh+ic;
+    out[di]=data[si];
+  }
+  return out;
+}
+
+function myTransposeDenseWeights(data, outH, outW, numFilters, numClasses) {
+  const flatSize=outH*outW*numFilters;
+  const out=new Float32Array(data.length);
+  for (let cls=0;cls<numClasses;cls++) for (let f=0;f<numFilters;f++) for (let y=0;y<outH;y++) for (let x=0;x<outW;x++) {
+    const flatCL=y*outW*numFilters+x*numFilters+f;
+    const flatCF=f*outH*outW+y*outW+x;
+    out[cls*flatSize+flatCF]=data[flatCL*numClasses+cls];
+  }
+  return out;
+}
+
+async function myGetWeightLayers() {
+  if (!myModel) { myLog('ERROR: No model to export'); return null; }
+  const wl = myModel.layers.filter(l=>l.getWeights().length>0);
+  if (wl.length<3) { myLog('ERROR: Expected 3 weight layers, found '+wl.length); return null; }
+  const [conv1L,conv2L,denseL] = wl;
+  const [c1w,c1b] = conv1L.getWeights();
+  const [c2w,c2b] = conv2L.getWeights();
+  const [dw,db]   = denseL.getWeights();
+  const inCh = myIsGrayscaleMode ? 1 : 3;
+  const c2out = myGetConv2Out(myInputSize);
+  return {
+    conv1W: myTransposeConvWeights(await c1w.data(), 3, 3, inCh, 4),
+    conv1B: new Float32Array(await c1b.data()),
+    conv2W: myTransposeConvWeights(await c2w.data(), 3, 3, 4, 8),
+    conv2B: new Float32Array(await c2b.data()),
+    denseW: myTransposeDenseWeights(await dw.data(), c2out, c2out, 8, 3),
+    denseB: new Float32Array(await db.data())
+  };
+}
+
+async function myExportBin() {
+  const weights = await myGetWeightLayers();
+  if (!weights) return;
+  const labels  = myGetLabels();
+  const version = parseInt(document.getElementById('myBinVersion').value) || 50;
+  const inCh    = myIsGrayscaleMode ? 1 : 3;
+
+  const headerObj = {
+    version:       version,
+    inputSize:     myInputSize,
+    numClasses:    3,
+    conv1Filters:  4,
+    conv2Filters:  8,
+    inputChannels: inCh,
+    quantization:  "float32",
+    labels:        labels
+  };
+  const headerText =
+    "--- WEIGHTS HEADER BEGIN ---\n" +
+    JSON.stringify(headerObj) + "\n" +
+    "--- WEIGHTS HEADER END ---\n\n";
+
+  const enc  = new TextEncoder();
+  const hdr  = enc.encode(headerText);
+  const nf   = weights.conv1W.length + weights.conv1B.length +
+               weights.conv2W.length + weights.conv2B.length +
+               weights.denseW.length + weights.denseB.length;
+  const bin  = new Uint8Array(nf*4);
+  const dv   = new DataView(bin.buffer);
+  let off = 0;
+  const wf = arr => { for (const v of arr) { dv.setFloat32(off,v,true); off+=4; } };
+  wf(weights.conv1W); wf(weights.conv1B);
+  wf(weights.conv2W); wf(weights.conv2B);
+  wf(weights.denseW); wf(weights.denseB);
+
+  const blob = new Blob([hdr,bin], {type:'application/octet-stream'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'myWeights.bin';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  myLog(`myWeights.bin exported — version=${version} | channels=${inCh} | labels=[${labels.join(', ')}]`);
+  myLog(`  Copy to SD card: /header/myWeights.bin`);
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 10 — LEGACY HEADER FILE EXPORT (.h)
+     Exports model weights as a C/C++ header file for older firmware
+     that hardcodes weights at compile time rather than loading from SD.
+     ─────────────────────────────────────────────────────────────────
+     myExportHeader()
+       - reads the Int8 and Grayscale checkboxes
+       - loops through all model layers and their weight tensors
+       - outputs either float32 arrays or int8 scaled arrays
+       - downloads as <name>.h for inclusion in Arduino/PlatformIO sketch
+     ─────────────────────────────────────────────────────────────────
+     Int8 mode: weights are scaled to [-127, 127] and a scale factor
+     is stored alongside so the ESP32 can reconstruct float values.
+     Note: This export method is NOT needed for v57+ firmware which
+     reads weights directly from the SD card at runtime.
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// HEADER FILE EXPORT (legacy .h)
+// ─────────────────────────────────────────────────────────
+async function myExportHeader() {
+  if (!myModel) { myLog('Error: no model to export'); return; }
+  const isInt8 = document.getElementById('myInt8Toggle').checked;
+  const isGray = document.getElementById('myGrayscaleToggle').checked;
+  if (isGray && !myIsGrayscaleMode) {
+    alert('Model was trained in RGB mode. Export as RGB or retrain in grayscale.');
+    document.getElementById('myGrayscaleToggle').checked=false; return;
+  }
+  myLog(`Generating ${isInt8?'Int8':'Float32'} ${isGray?'Grayscale':'RGB'} header...`);
+  const [l0,l1,l2] = myGetLabels().map(toCString);
+  let txt = `// Overflow-Protected 2-Layer CNN Model with Labels\n#ifndef MY_MODEL_H\n#define MY_MODEL_H\n\n`;
+  txt += `const char* myClassLabels[3] = {\n  "${l0}",\n  "${l1}",\n  "${l2}"\n};\n\n`;
+  if (isInt8) txt += `#define USE_INT8_MODE\n`;
+  if (isGray) txt += `#define USE_GRAYSCALE_MODE\n`;
+  txt += `\n`;
+  const names = ["myConv1_w","myConv1_b","myConv2_w","myConv2_b","myOutput_w","myOutput_b"];
+  let ni = 0;
+  for (const l of myModel.layers) {
+    if (!l.getWeights().length) continue;
+    for (const w of l.getWeights()) {
+      let d = Array.from(await w.data());
+      const maxAbs = Math.max(...d.map(Math.abs));
+      if (maxAbs>10) { myLog(`WARNING: large weights (${maxAbs.toFixed(2)}), clipping`); d=d.map(v=>Math.max(-10,Math.min(10,v))); }
+      if (isInt8) {
+        const scale = 127/(maxAbs||1);
+        txt += `const float ${names[ni]}_scale = ${scale.toFixed(6)}f;\n`;
+        txt += `const int8_t ${names[ni]}[] = { ${d.map(v=>Math.round(v*scale)).join(', ')} };\n\n`;
+      } else {
+        txt += `const float ${names[ni]}[] = { ${d.map(v=>v.toFixed(6)).join(', ')} };\n\n`;
+      }
+      ni++;
+    }
+  }
+  txt += `#endif`;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([txt]));
+  a.download=(document.getElementById('myExportName').value||'myModel')+'.h';
+  a.click();
+  myLog(`Header exported: ${a.download}`);
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 11 — SOURCE CODE EDITOR
+     A simple in-page code editor that lets you modify the HTML inside
+     the #myCodeSpace div and re-run it without refreshing the page.
+     ─────────────────────────────────────────────────────────────────
+     myToggleEditor()  - shows/hides the textarea and Update button
+     myApplyAndRun()   - replaces #myCodeSpace innerHTML with textarea content
+                         and calls myStartAll() to restart the app
+     ─────────────────────────────────────────────────────────────────
+     Note: The scripts outside #myCodeSpace (this one and all above)
+     are NOT affected by the editor. Only the HTML section is replaced.
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// SOURCE CODE EDITOR
+// ─────────────────────────────────────────────────────────
+var myEditorOpen = false;
+function myToggleEditor() {
+  const ta = document.getElementById('myTextarea1');
+  const btn = document.getElementById('myUpdateBtn');
+  if (!myEditorOpen) {
+    ta.value = document.getElementById('myCodeSpace').innerHTML;
+    ta.rows = 30;
+    ta.style.display = 'block';
+    btn.style.display = 'inline-block';
+    myEditorOpen = true;
+  } else {
+    ta.style.display = 'none';
+    btn.style.display = 'none';
+    myEditorOpen = false;
+  }
+}
+function myApplyAndRun() {
+  document.getElementById('myCodeSpace').innerHTML = document.getElementById('myTextarea1').value;
+  myLog('Code updated & restarting...');
+  myStartAll();
+}
+</script>
+
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SCRIPT SECTION 12 — INIT (runs once on page load)
+     Initializes the camera dropdown, resolution hint, config textarea,
+     and sets up live-update listeners on key input fields.
+     ─────────────────────────────────────────────────────────────────
+     - Enumerates all video input devices and populates the camera select
+     - Calls myUpdateResolutionHint() to show the default 64x64 info
+     - Calls myRefreshConfigTextarea() to populate the config.json preview
+     - Attaches 'input' event listeners so the config textarea updates
+       live whenever labels, LR, batch size, epochs, or validation
+       images are changed
+     - Checks for WebSerial support and updates the status badge
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────
+(async function init() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const sel = document.getElementById('myCameraSelect');
+  devices.filter(d=>d.kind==='videoinput').forEach((d,i) => {
+    const o = document.createElement('option');
+    o.value = d.deviceId;
+    o.text  = d.label || `Camera ${i+1}`;
+    sel.appendChild(o);
+  });
+  myUpdateResolutionHint();
+  myRefreshConfigTextarea();
+
+  ['myLabel0','myLabel1','myLabel2','myLearningRate','myBatchSize','myTargetEpochs',
+   'myExportValidationImages'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', myRefreshConfigTextarea);
+  });
+
+  if (!('serial' in navigator)) {
+    const notice = document.getElementById('mySerialStatus');
+    notice.textContent = 'WebSerial not supported (use Chrome/Edge)';
+  }
+})();
+</script>
+
+</body>
+</html>
