@@ -496,7 +496,7 @@ var myEspJpegBytes = [];
 
 // Flash firmware state
 var myFlashMode = 'A'; // 'A' = sketch only (.bin), 'B' = full merged (.bin)
-var myFlashSketchFile  = 'esp32-on-device-60.ino.bin';
+var myFlashSketchFile  = 'esp_all_menu_image_train_infer60.ino.bin';
 var myFlashMergedFile  = 'esp_all_menu_image_train_infer60.ino.merged.bin';
 </script>
 
@@ -1726,7 +1726,7 @@ function myApplyAndRun() {
          (NOT base64, NOT ArrayBuffer — each charCode = one raw byte)
      ─────────────────────────────────────────────────────────────────
      Default filenames (placed alongside this HTML file):
-       esp32-on-device-60.ino.bin         → Option A  @ 0x10000
+       esp_all_menu_image_train_infer60.ino.bin         → Option A  @ 0x10000
        esp_all_menu_image_train_infer60.ino.merged.bin  → Option B  @ 0x0
      Replace these names in the state vars (top of STATE section) to
      switch to a different build without editing this function.
